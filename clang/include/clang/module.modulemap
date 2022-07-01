@@ -20,6 +20,7 @@ module Clang_AST {
   textual header "AST/BuiltinTypes.def"
   textual header "AST/CXXRecordDeclDefinitionBits.def"
   textual header "AST/OperationKinds.def"
+  textual header "AST/TransformTypeTraits.def"
   textual header "AST/TypeLocNodes.def"
 
   module * { export * }

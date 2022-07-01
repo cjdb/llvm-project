@@ -1038,9 +1038,10 @@ ExprResult Parser::ParseCastExpression(CastParseKind ParseKind,
     return ParseCastExpression(ParseKind, isAddressOfOperand, isTypeCast,
                                isVectorLiteral, NotPrimaryExpression);
 
-  case tok::identifier: {      // primary-expression: identifier
-                               // unqualified-id: identifier
-                               // constant: enumeration-constant
+  case tok::identifier:
+  ParseIdentifier: {    // primary-expression: identifier
+                        // unqualified-id: identifier
+                        // constant: enumeration-constant
     // Turn a potentially qualified name into a annot_typename or
     // annot_cxxscope if it would be valid.  This handles things like x::y, etc.
     if (getLangOpts().CPlusPlus) {
@@ -1062,6 +1063,8 @@ ExprResult Parser::ParseCastExpression(CastParseKind ParseKind,
           RevertibleTypeTraits[PP.getIdentifierInfo(#Name)] \
             = RTT_JOIN(tok::kw_,Name)
 
+          REVERTIBLE_TYPE_TRAIT(__add_lvalue_reference);
+          REVERTIBLE_TYPE_TRAIT(__add_rvalue_reference);
           REVERTIBLE_TYPE_TRAIT(__is_abstract);
           REVERTIBLE_TYPE_TRAIT(__is_aggregate);
           REVERTIBLE_TYPE_TRAIT(__is_arithmetic);
@@ -1113,6 +1116,10 @@ ExprResult Parser::ParseCastExpression(CastParseKind ParseKind,
           REVERTIBLE_TYPE_TRAIT(__is_unsigned);
           REVERTIBLE_TYPE_TRAIT(__is_void);
           REVERTIBLE_TYPE_TRAIT(__is_volatile);
+          REVERTIBLE_TYPE_TRAIT(__remove_const);
+          REVERTIBLE_TYPE_TRAIT(__remove_cv);
+          REVERTIBLE_TYPE_TRAIT(__remove_reference);
+          REVERTIBLE_TYPE_TRAIT(__remove_volatile);
 #undef REVERTIBLE_TYPE_TRAIT
 #undef RTT_JOIN
         }
@@ -1739,6 +1746,17 @@ ExprResult Parser::ParseCastExpression(CastParseKind ParseKind,
                                    PreferredType.get(Tok.getLocation()));
     return ExprError();
   }
+#define TRANSFORM_TYPE_TRAIT_DEF(_, Trait) case tok::kw___##Trait:
+#include "clang/AST/TransformTypeTraits.def"
+    // HACK: libstdc++ uses some of the transform-type-traits as alias
+    // templates, so we need to work around this.
+    if (!NextToken().is(tok::l_paren)) {
+      Tok.setKind(tok::identifier);
+      Diag(Tok, diag::ext_keyword_as_ident)
+          << Tok.getIdentifierInfo()->getName() << 0;
+      goto ParseIdentifier;
+    }
+    goto ExpectedExpression;
   case tok::l_square:
     if (getLangOpts().CPlusPlus11) {
       if (getLangOpts().ObjC) {
@@ -1766,6 +1784,7 @@ ExprResult Parser::ParseCastExpression(CastParseKind ParseKind,
     }
     LLVM_FALLTHROUGH;
   default:
+  ExpectedExpression:
     NotCastExpr = true;
     return ExprError();
   }
