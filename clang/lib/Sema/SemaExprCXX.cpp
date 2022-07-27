@@ -21,11 +21,14 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/Basic/AlignedAllocation.h"
 #include "clang/Basic/DiagnosticSema.h"
 #include "clang/Basic/PartialDiagnostic.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/TargetInfo.h"
+#include "clang/Basic/TokenKinds.h"
 #include "clang/Basic/TypeTraits.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/DeclSpec.h"
@@ -5643,6 +5646,115 @@ static bool EvaluateBinaryTypeTrait(Sema &Self, TypeTrait BTT, QualType LhsT,
     default: llvm_unreachable("not a BTT");
   }
   llvm_unreachable("Unknown type trait or not implemented");
+}
+
+static ExprResult HandleInvokePointerToMember2(Sema &S, QualType CalleeType,
+                                               SourceLocation LParenLoc,
+                                               Expr *F, MultiExprArg Args,
+                                               SourceLocation RParenLoc) {
+  if (CalleeType->isMemberFunctionPointerType()) {
+    ExprResult B = S.BuildBinOp(S.getCurScope(), LParenLoc,
+                                BinaryOperatorKind::BO_PtrMemD, Args[0], F);
+    if (B.isInvalid()) {
+      return ExprError();
+    }
+
+    return S.BuildCallToMemberFunction(S.getCurScope(), B.get(), LParenLoc,
+                                       Args.drop_front(), RParenLoc);
+  }
+
+  if (Args.size() != 1) {
+    S.Diag(LParenLoc, diag::err_invoke_ptr_to_data_member_too_many_args)
+        << 0 << (Args.size() + 1);
+    return ExprError();
+  }
+  return S.BuildBinOp(S.getCurScope(), LParenLoc,
+                      BinaryOperatorKind::BO_PtrMemD, Args[0], F);
+}
+
+static ExprResult HandleInvokePointerToMember(Sema &S, QualType CalleeType,
+                                              SourceLocation LParenLoc, Expr *F,
+                                              MultiExprArg Args,
+                                              SourceLocation RParenLoc) {
+  QualType FirstArgType = Args[0]->getType();
+  auto *PtrToMember = dyn_cast<MemberPointerType>(CalleeType);
+  bool IsBase = EvaluateBinaryTypeTrait(
+      S, BTT_IsBaseOf, QualType(PtrToMember->getClass(), 0),
+      S.BuiltinRemoveReference(FirstArgType, Sema::UTTKind::RemoveReference,
+                               {}),
+      {});
+
+  if (IsBase)
+    return HandleInvokePointerToMember2(S, CalleeType, LParenLoc, F, Args,
+                                        RParenLoc);
+
+  if (RecordDecl *D = FirstArgType->getAsCXXRecordDecl()) {
+    ExprResult Get;
+    if (D->isInStdNamespace() && D->getName() == "reference_wrapper") {
+      FirstArgType = S.BuiltinAddReference(
+          dyn_cast<TemplateSpecializationType>(
+              dyn_cast<ElaboratedType>(FirstArgType)->getNamedType())
+              ->getArg(0)
+              .getAsType(),
+          Sema::UTTKind::AddLvalueReference, {});
+      Get = S.BuildCXXNamedCast(
+          {}, tok::kw_static_cast,
+          S.Context.getTrivialTypeSourceInfo(FirstArgType), Args[0], {}, {});
+      Args[0] = Get.get();
+    }
+    return HandleInvokePointerToMember2(S, CalleeType, LParenLoc, F, Args,
+                                        RParenLoc);
+  }
+
+  if (!FirstArgType->isPointerType()) {
+    assert(false and "not implemented");
+  }
+
+  bool PointeeIsBase = EvaluateBinaryTypeTrait(
+      S, BTT_IsBaseOf, QualType(PtrToMember->getClass(), 0),
+      FirstArgType->getPointeeType(), {});
+  if (!PointeeIsBase) {
+    S.Diag(LParenLoc, diag::err_invoke_incompatible_ptr_to_member)
+        << 0 << CalleeType << FirstArgType;
+    return ExprError();
+  }
+
+  ExprResult Deref = S.BuildUnaryOp(S.getCurScope(), LParenLoc,
+                                    UnaryOperatorKind::UO_Deref, Args[0]);
+  if (Deref.isInvalid()) {
+    return ExprError();
+  }
+  Args[0] = Deref.get();
+
+  return HandleInvokePointerToMember2(S, CalleeType, LParenLoc, F, Args,
+                                      RParenLoc);
+}
+
+ExprResult Sema::BuildStdInvokeCall(CallExpr *TheCall) {
+  assert(TheCall->getNumArgs() > 0);
+
+  Expr *F = TheCall->getArgs()[0];
+  QualType CalleeType = F->getType();
+  MultiExprArg Args(TheCall->getArgs() + 1, TheCall->getNumArgs() - 1);
+
+  // FIXME: remove this comment block once notes are addressed.
+  // Reviewer note 1: It really feels like there should be some way to use
+  // Context.getSubstTemplateTypeParmType, but it's not clear what the second
+  // argument should be.
+  // Reviewer note 2: Do we need to consider SubstTemplateTypeParmPackType too?
+  if (auto *T = dyn_cast<SubstTemplateTypeParmType>(CalleeType))
+    CalleeType = T->getReplacementType();
+
+  if (!CalleeType->isMemberPointerType())
+    return ActOnCallExpr(getCurScope(), F, {}, Args, {});
+
+  if (Args.size() == 0) {
+    Diag({}, diag::err_invoke_ptr_to_member_too_few_args) << 0;
+    return ExprError();
+  }
+
+  return HandleInvokePointerToMember(*this, CalleeType, TheCall->getBeginLoc(),
+                                     F, Args, TheCall->getEndLoc());
 }
 
 ExprResult Sema::ActOnArrayTypeTrait(ArrayTypeTrait ATT,

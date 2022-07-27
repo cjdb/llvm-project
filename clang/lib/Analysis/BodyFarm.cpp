@@ -22,6 +22,8 @@
 #include "clang/Analysis/CodeInjector.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/OperatorKinds.h"
+#include "clang/Sema/Sema.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Debug.h"
 
@@ -89,6 +91,9 @@ public:
 
   /// Create a cast to reference type.
   CastExpr *makeReferenceCast(const Expr *Arg, QualType Ty);
+
+  /// Create an INVOKE invocation.
+  Expr *makeInvokeExpr(Sema &S, Expr *F, MultiExprArg Args);
 
   /// Create an Objective-C bool literal.
   ObjCBoolLiteralExpr *makeObjCBool(bool Val);
@@ -185,6 +190,23 @@ CastExpr *ASTMaker::makeReferenceCast(const Expr *Arg, QualType Ty) {
       const_cast<Expr *>(Arg), /*CXXCastPath=*/nullptr,
       /*Written=*/C.getTrivialTypeSourceInfo(Ty), FPOptionsOverride(),
       SourceLocation(), SourceLocation(), SourceRange());
+}
+
+Expr *ASTMaker::makeInvokeExpr(Sema &S, Expr *F, MultiExprArg Args) {
+  if (Args.size() > 0) {
+    QualType T = Args[0]->getType();
+    if (T->isMemberFunctionPointerType()) {
+    }
+    if (T->isMemberDataPointerType()) {
+    }
+
+    if (RecordDecl *R = T->getAsRecordDecl()) {
+      if (R->isInStdNamespace() &&
+          R->getName().startswith("reference_wrapper")) {
+      }
+    }
+  }
+  return S.BuildCallExpr(S.getCurScope(), F, {}, Args, {}).get();
 }
 
 Expr *ASTMaker::makeIntegralCast(const Expr *Arg, QualType Ty) {

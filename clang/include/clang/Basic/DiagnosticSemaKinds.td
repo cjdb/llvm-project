@@ -8431,6 +8431,16 @@ def err_typecheck_call_too_many_args_at_most_suggest : Error<
   "%select{function|block|method|kernel function}0 call, "
   "expected at most %1, have %2; did you mean %3?">;
 
+def err_invoke_incompatible_ptr_to_member : Error<
+  "second argument to 'std::invoke%select{|_r}0' must be a class compatible "
+  "with the first argument, but it is %2">;
+def err_invoke_ptr_to_member_too_few_args : Error<
+  "too few arguments for pointer-to-member invocation; "
+  "'std::invoke%select{|_r}0' requires at least 2 (got 1)">;
+def err_invoke_ptr_to_data_member_too_many_args : Error<
+  "too many arguments for pointer-to-data-member invocation; "
+  "'std::invoke%select{|_r}0' requires exactly 2 arguments (got %1)">;
+
 def err_arc_typecheck_convert_incompatible_pointer : Error<
   "incompatible pointer types passing retainable parameter of type %0"
   "to a CF function expecting %1 type">;

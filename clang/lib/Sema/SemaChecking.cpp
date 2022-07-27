@@ -28,6 +28,7 @@
 #include "clang/AST/ExprOpenMP.h"
 #include "clang/AST/FormatString.h"
 #include "clang/AST/NSAPI.h"
+#include "clang/AST/NestedNameSpecifier.h"
 #include "clang/AST/NonTrivialTypeVisitor.h"
 #include "clang/AST/OperationKinds.h"
 #include "clang/AST/RecordLayout.h"
@@ -2416,6 +2417,10 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
           << FDecl;
       return ExprError();
     }
+    break;
+  }
+  case Builtin::BIinvoke: {
+    TheCallResult = BuildStdInvokeCall(TheCall);
     break;
   }
   // OpenCL v2.0, s6.13.16 - Pipe functions

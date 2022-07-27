@@ -9292,6 +9292,8 @@ static bool isStdBuiltin(ASTContext &Ctx, FunctionDecl *FD,
     const auto *FPT = FD->getType()->castAs<FunctionProtoType>();
     return FPT->getNumParams() == 1 && !FPT->isVariadic();
   }
+  case Builtin::BIinvoke:
+    return true;
 
   default:
     return false;

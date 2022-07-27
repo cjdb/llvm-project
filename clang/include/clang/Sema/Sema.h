@@ -5696,6 +5696,8 @@ public:
                                 ParmVarDecl *Param,
                                 const Expr *ArgExpr);
 
+  ExprResult BuildStdInvokeCall(CallExpr *TheCall);
+
   /// ActOnCallExpr - Handle a call to Fn with the specified array of arguments.
   /// This provides the location of the left/right parens and a list of comma
   /// locations.

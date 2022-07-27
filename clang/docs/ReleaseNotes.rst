@@ -432,9 +432,9 @@ C++ Language Changes in Clang
 -----------------------------
 
 - Improved ``-O0`` code generation for calls to ``std::move``, ``std::forward``,
-  ``std::move_if_noexcept``, ``std::addressof``, and ``std::as_const``. These
-  are now treated as compiler builtins and implemented directly, rather than
-  instantiating the definition from the standard library.
+  ``std::move_if_noexcept``, ``std::addressof``, ``std::as_const``, ``std::invoke``, and
+  ``std::invoke_r``. These are now treated as compiler builtins and implemented directly, rather
+  than instantiating the definition from the standard library.
 - Fixed mangling of nested dependent names such as ``T::a::b``, where ``T`` is a
   template parameter, to conform to the Itanium C++ ABI and be compatible with
   GCC. This breaks binary compatibility with code compiled with earlier versions
@@ -565,7 +565,7 @@ AST Matchers
 
 - Added ``forEachTemplateArgument`` matcher which creates a match every
   time a ``templateArgument`` matches the matcher supplied to it.
-  
+
 - Added ``objcStringLiteral`` matcher which matches ObjectiveC String
   literal expressions.
 

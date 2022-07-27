@@ -8316,6 +8316,8 @@ bool LValueExprEvaluator::VisitCallExpr(const CallExpr *E) {
   switch (E->getBuiltinCallee()) {
   case Builtin::BIas_const:
   case Builtin::BIforward:
+  case Builtin::BIinvoke:
+  case Builtin::BIinvoke_r:
   case Builtin::BImove:
   case Builtin::BImove_if_noexcept:
     if (cast<FunctionDecl>(E->getCalleeDecl())->isConstexpr())
