@@ -61,11 +61,12 @@ template <class _Tp, class _Up>
 struct __tuple_constructible<_Tp, _Up, true, true>
     : public __tuple_sfinae_base::__constructible< typename __make_tuple_types<_Tp>::type,
                                                    typename __make_tuple_types<_Up>::type > {};
-
+#  ifndef __experimental_tuple
 template <size_t _Ip, class... _Tp>
 struct _LIBCPP_TEMPLATE_VIS tuple_element<_Ip, tuple<_Tp...> > {
   typedef _LIBCPP_NODEBUG typename tuple_element<_Ip, __tuple_types<_Tp...> >::type type;
 };
+#  endif
 
 struct _LIBCPP_EXPORTED_FROM_ABI __check_tuple_constructor_fail {
   static _LIBCPP_HIDE_FROM_ABI constexpr bool __enable_explicit_default() { return false; }

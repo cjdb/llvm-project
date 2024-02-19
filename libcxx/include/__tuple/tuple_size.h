@@ -9,6 +9,7 @@
 #ifndef _LIBCPP___TUPLE_TUPLE_SIZE_H
 #define _LIBCPP___TUPLE_TUPLE_SIZE_H
 
+#include <__concepts/arithmetic.h>
 #include <__config>
 #include <__fwd/tuple.h>
 #include <__tuple/tuple_types.h>
@@ -21,6 +22,8 @@
 #endif
 
 _LIBCPP_BEGIN_NAMESPACE_STD
+
+#ifndef __experimental_tuple
 
 template <class _Tp>
 struct _LIBCPP_TEMPLATE_VIS tuple_size;
@@ -64,6 +67,36 @@ template <class... _Tp>
 struct _LIBCPP_TEMPLATE_VIS tuple_size<__tuple_types<_Tp...> > : public integral_constant<size_t, sizeof...(_Tp)> {};
 
 #endif // _LIBCPP_CXX03_LANG
+
+#else
+template <class T>
+struct _LIBCPP_TEMPLATE_VIS tuple_size;
+
+template <class T>
+concept __has_tuple_size =
+    not is_reference_v<T> and              //
+    requires { tuple_size<T>::value; } and //
+    same_as<remove_cvref_t<decltype(tuple_size<T>::value)>, size_t>;
+
+template <__has_tuple_size T>
+inline constexpr size_t tuple_size_v = tuple_size<T>::value;
+
+template <__has_tuple_size T>
+struct _LIBCPP_TEMPLATE_VIS tuple_size<T const> : integral_constant<size_t, tuple_size_v<T>> {};
+
+template <__has_tuple_size T>
+struct _LIBCPP_TEMPLATE_VIS tuple_size<T volatile> : integral_constant<size_t, tuple_size_v<T>> {};
+
+template <__has_tuple_size T>
+struct _LIBCPP_TEMPLATE_VIS tuple_size<T const volatile> : integral_constant<size_t, tuple_size_v<T>> {};
+
+template <class... Ts>
+struct _LIBCPP_TEMPLATE_VIS tuple_size<tuple<Ts...>> : integral_constant<size_t, sizeof...(Ts)> {};
+
+template <class... Ts>
+struct _LIBCPP_TEMPLATE_VIS tuple_size<__tuple_types<Ts...>> : integral_constant<size_t, sizeof...(Ts)> {};
+
+#endif
 
 _LIBCPP_END_NAMESPACE_STD
 

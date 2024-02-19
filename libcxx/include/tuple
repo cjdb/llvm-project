@@ -228,6 +228,7 @@ template <class... Types>
 #include <__type_traits/conjunction.h>
 #include <__type_traits/copy_cvref.h>
 #include <__type_traits/disjunction.h>
+#include <__type_traits/invoke.h>
 #include <__type_traits/is_arithmetic.h>
 #include <__type_traits/is_assignable.h>
 #include <__type_traits/is_constructible.h>
@@ -279,7 +280,8 @@ _LIBCPP_PUSH_MACROS
 
 _LIBCPP_BEGIN_NAMESPACE_STD
 
-#ifndef _LIBCPP_CXX03_LANG
+#ifndef __experimental_tuple
+#  ifndef _LIBCPP_CXX03_LANG
 
 // __tuple_leaf
 
@@ -1408,12 +1410,12 @@ inline _LIBCPP_HIDE_FROM_ABI _LIBCPP_CONSTEXPR_SINCE_CXX20 pair<_T1, _T2>::pair(
     : first(std::forward<_Args1>(std::get<_I1>(__first_args))...),
       second(std::forward<_Args2>(std::get<_I2>(__second_args))...) {}
 
-#  if _LIBCPP_STD_VER >= 17
+#    if _LIBCPP_STD_VER >= 17
 template <class _Tp>
 inline constexpr size_t tuple_size_v = tuple_size<_Tp>::value;
 
-#    define _LIBCPP_NOEXCEPT_RETURN(...)                                                                               \
-      noexcept(noexcept(__VA_ARGS__)) { return __VA_ARGS__; }
+#      define _LIBCPP_NOEXCEPT_RETURN(...)                                                                             \
+        noexcept(noexcept(__VA_ARGS__)) { return __VA_ARGS__; }
 
 // The _LIBCPP_NOEXCEPT_RETURN macro breaks formatting.
 // clang-format off
@@ -1443,7 +1445,4148 @@ inline _LIBCPP_HIDE_FROM_ABI constexpr _Tp make_from_tuple(_Tuple&& __t)
 #  endif // _LIBCPP_STD_VER >= 17
 
 #endif // !defined(_LIBCPP_CXX03_LANG)
+#else
+#pragma GCC diagnostic ignored "-Wc++26-extensions"
+template<class T, class U>
+concept __synth_three_way_comparable_with = requires(T const& t, U const& u) {
+    { t < u } -> std::__boolean_testable;
+    { u < t } -> std::__boolean_testable;
+};
 
+template<class T, class Alloc, class... Ts>
+concept __uses_allocator_construction =
+  uses_allocator_v<T, Alloc> and
+  (is_constructible_v<T, allocator_arg_t, Alloc, Ts...> or is_constructible_v<T, Ts..., Alloc>);
+
+template<class T, class Alloc, class... Ts>
+concept __constructible_with_allocator =
+  __uses_allocator_construction<T, Alloc, Ts...> or is_constructible_v<T, Ts...>;
+
+template<class T, class Alloc, class... Ts>
+requires __constructible_with_allocator<T, Alloc, Ts...>
+T __construct_with_allocator(Alloc const& __alloc, Ts&&... ts)
+{
+  if constexpr (not uses_allocator_v<T, Alloc>) {
+    return T(std::forward<Ts>(ts)...);
+  }
+  else if constexpr (is_constructible_v<T, allocator_arg_t, Alloc, Ts...>) {
+    return T(allocator_arg, __alloc, std::forward<Ts>(ts)...);
+  }
+  else {
+    return T(std::forward<Ts>(ts)..., __alloc);
+  }
+}
+
+template<class... Ts>
+class _LIBCPP_TEMPLATE_VIS tuple;
+
+template<>
+class _LIBCPP_TEMPLATE_VIS tuple<> {
+public:
+  [[clang::always_inline]] tuple() = default;
+  [[clang::always_inline]] tuple(tuple const&) = default;
+  [[clang::always_inline]] tuple(tuple&&) = default;
+
+  [[clang::always_inline]] tuple(allocator_arg_t, auto const&) noexcept {}
+  [[clang::always_inline]] tuple(allocator_arg_t, auto const&, tuple const&) noexcept {}
+  [[clang::always_inline]] tuple(allocator_arg_t, auto const&, tuple&&) noexcept {}
+
+  [[clang::always_inline]] constexpr void swap(tuple&) noexcept {}
+  [[clang::always_inline]] constexpr void swap(tuple const&) const noexcept {}
+
+  friend constexpr auto operator<=>(tuple, tuple) = default;
+};
+
+template<class... UTypes>
+tuple(UTypes...) -> tuple<UTypes...>;
+template<class T1, class T2>
+tuple(std::pair<T1, T2>) -> tuple<T1, T2>;
+template<class Alloc, class... UTypes>
+tuple(allocator_arg_t, Alloc, UTypes...) -> tuple<UTypes...>;
+template<class Alloc, class T1, class T2>
+tuple(allocator_arg_t, Alloc, std::pair<T1, T2>) -> tuple<T1, T2>;
+template<class Alloc, class... UTypes>
+tuple(allocator_arg_t, Alloc, tuple<UTypes...>) -> tuple<UTypes...>;
+
+template<class T>
+void __implicitly_construct(T);
+
+template<class T, class... Args>
+inline constexpr bool __is_implicitly_constructible = requires(Args&&... args) {
+  __implicitly_construct<T>({std::forward<Args>(args)...});
+};
+
+template<class T0>
+class _LIBCPP_TEMPLATE_VIS tuple<T0> {
+public:
+  [[no_unique_address]] T0 __x0;
+
+  constexpr explicit(not (__is_implicitly_constructible<T0>)) tuple() noexcept(is_nothrow_default_constructible_v<T0>) requires std::is_default_constructible_v<T0>
+  : __x0()
+  {}
+
+  constexpr explicit(not (is_convertible_v<T0 const&, T0>)) tuple(T0 const& t) noexcept(is_nothrow_copy_constructible_v<T0>)
+  requires requires { T0{t}; }
+  : __x0(t)
+  {}
+
+  template<class U0>
+  requires is_constructible_v<T0, U0> and (not (std::is_same_v<std::remove_cvref_t<U0>, tuple> /* or reference_constructs_from_temporary_v<T0, U0&&*/))
+  constexpr explicit(not is_convertible_v<U0, T0>) tuple(U0&& u0) noexcept(is_nothrow_constructible_v<T0, U0>)
+  : __x0(std::forward<U0>(u0))
+  {}
+
+  template<class U0>
+  requires (not (is_convertible_v<tuple<U0>&, T0> or is_constructible_v<T0, tuple<U0>&> or std::same_as<T0, U0>))
+  constexpr explicit(not is_convertible_v<U0&, T0>) tuple(tuple<U0>& t) noexcept(is_nothrow_constructible_v<T0, tuple<U0>&>)
+  : __x0(std::forward<U0>(t.__x0))
+  {}
+
+  template<class U0>
+  requires (not (is_convertible_v<tuple<U0> const&, T0> or is_constructible_v<T0, tuple<U0> const&> or std::same_as<T0, U0>))
+  constexpr explicit(not is_convertible_v<U0 const&, T0>) tuple(tuple<U0> const& t) noexcept(is_nothrow_constructible_v<T0, tuple<U0> const&>)
+  : __x0(std::forward<U0 const>(t.__x0))
+  {}
+
+  template<class U0>
+  requires (not (is_convertible_v<tuple<U0>&&, T0> or is_constructible_v<T0, tuple<U0>&&> or std::same_as<T0, U0>))
+  constexpr explicit(not is_convertible_v<U0&&, T0>) tuple(tuple<U0>&& t) noexcept(is_nothrow_constructible_v<T0, tuple<U0>&&>)
+  : __x0(std::forward<U0>(t.__x0))
+  {}
+
+  template<class U0>
+  requires (not (is_convertible_v<tuple<U0> const&&, T0> or is_constructible_v<T0, tuple<U0> const&&> or std::same_as<T0, U0>))
+  constexpr explicit(not is_convertible_v<U0 const&&, T0>) tuple(tuple<U0> const&& t) noexcept(is_nothrow_constructible_v<T0, tuple<U0> const&&>)
+  : __x0(std::forward<U0 const>(t.__x0))
+  {}
+
+  template<class _U0>
+  requires (not (is_convertible_v<std::array<_U0, 1>, _U0> or is_constructible_v<_U0, std::array<_U0, 1>>))
+  constexpr explicit(not (is_convertible_v<_U0, T0>)) tuple(std::array<_U0, 1>& __a) noexcept(is_nothrow_constructible_v<T0, array<_U0, 1>&>)
+  : __x0(__a[0])
+  {}
+
+  template<class _U0>
+  requires (not (is_convertible_v<std::array<_U0, 1>, _U0> or is_constructible_v<_U0, std::array<_U0, 1>>))
+  constexpr explicit(not (is_convertible_v<_U0, T0>)) tuple(std::array<_U0, 1> const& __a) noexcept(is_nothrow_constructible_v<T0, array<_U0, 1> const&>)
+  : __x0(__a[0])
+  {}
+
+  template<class _U0>
+  requires (not (is_convertible_v<std::array<_U0, 1>, _U0> or is_constructible_v<_U0, std::array<_U0, 1>>))
+  constexpr explicit(not (is_convertible_v<_U0, T0>)) tuple(std::array<_U0, 1>&& __a) noexcept(is_nothrow_constructible_v<T0, array<_U0, 1>&&>)
+  : __x0(std::move(__a[0]))
+  {}
+
+  template<class _U0>
+  requires (not (is_convertible_v<std::array<_U0, 1>, _U0> or is_constructible_v<_U0, std::array<_U0, 1>>))
+  constexpr explicit(not (is_convertible_v<_U0, T0>)) tuple(std::array<_U0, 1> const&& __a) noexcept(is_nothrow_constructible_v<T0, array<_U0, 1> const&&>)
+  : __x0(std::move(__a[0]))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&>
+  constexpr explicit(not __is_implicitly_constructible<T0, Alloc const&>) tuple(allocator_arg_t, Alloc const& __a)
+  : __x0(__construct_with_allocator<T0>(__a))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0 const&>
+  constexpr explicit(not __is_implicitly_constructible<T0, Alloc const&, T0 const>)
+  tuple(allocator_arg_t, Alloc const& a, T0 const& t)
+  : __x0(__construct_with_allocator<T0>(a, t))
+  {}
+
+  template<class Alloc, class U0>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&&> and (not (std::is_same_v<std::remove_cvref_t<U0>, tuple> /* or reference_constructs_from_temporary_v<T0, U0&&*/))
+  constexpr explicit(not __is_implicitly_constructible<T0, Alloc const&, U0&&>)
+  tuple(allocator_arg_t, Alloc const& a, U0&& u)
+  : __x0(__construct_with_allocator<T0>(a, std::forward<U0>(u)))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0 const&>
+  constexpr explicit(not __is_implicitly_constructible<T0, Alloc const&, T0 const&>)
+  tuple(allocator_arg_t, Alloc const& a, tuple const& other)
+  : __x0(__construct_with_allocator<T0>(a, other.__x0))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0&&>
+  constexpr explicit(not __is_implicitly_constructible<T0, Alloc const&, T0&&>)
+  tuple(allocator_arg_t, Alloc const& a, tuple&& other)
+  : __x0(__construct_with_allocator<T0>(a, std::move(other.__x0)))
+  {}
+
+  template<class Alloc, class U0>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&>
+  constexpr explicit(not (is_convertible_v<U0&, T0>)) tuple(allocator_arg_t, Alloc const& a, tuple<U0>& u)
+  : __x0(__construct_with_allocator<T0>(a, u.__x0))
+  {}
+
+  template<class Alloc, class U0>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0>)) tuple(allocator_arg_t, Alloc const& a, tuple<U0> const& u)
+  : __x0(__construct_with_allocator<T0>(a, u.__x0))
+  {}
+
+  template<class Alloc, class U0>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&&>
+  constexpr explicit(not (is_convertible_v<U0&&, T0>)) tuple(allocator_arg_t, Alloc const& a, tuple<U0>&& u)
+  : __x0(__construct_with_allocator<T0>(a, std::move(u.__x0)))
+  {}
+
+  template<class Alloc, class U0>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&&>
+  constexpr explicit(not (is_convertible_v<U0 const&&, T0>)) tuple(allocator_arg_t, Alloc const& a, tuple<U0> const&& u)
+  : __x0(__construct_with_allocator<T0>(a, std::move(u.__x0)))
+  {}
+
+  // template<class Alloc, tuple-like UTuple>
+  // constexpr explicit(see below) tuple(allocator_arg_t, const Alloc& a, UTuple&&);
+
+  tuple(tuple const&) = default;
+  tuple(tuple&&) = default;
+
+  // [tuple.assign], tuple assignment
+  constexpr tuple& operator=(tuple const& other) = default;
+  constexpr tuple& operator=(tuple&&) = default;
+
+  constexpr const tuple& operator=(tuple const& other) const
+  requires std::is_copy_assignable_v<T0 const>
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    return *this;
+  }
+
+  constexpr const tuple& operator=(tuple&& other) const
+  requires std::is_assignable_v<T0 const&, T0>
+  {
+    [[clang::always_inline]] __x0 = std::forward<T0>(other.__x0);
+    return *this;
+  }
+
+  template<class U0>
+  constexpr tuple& operator=(tuple<U0> const& other)
+  requires std::is_assignable_v<T0&, U0 const&>
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    return *this;
+  }
+
+  template<class U0>
+  constexpr tuple const& operator=(tuple<U0> const& other) const
+  requires std::is_assignable_v<T0 const&, U0 const&>
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    return *this;
+  }
+
+  template<class U0>
+  constexpr tuple& operator=(tuple<U0>&& other)
+  requires std::is_assignable_v<T0&, U0>
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    return *this;
+  }
+
+  template<class U0>
+  constexpr tuple const& operator=(tuple<U0> const&& other) const
+  requires std::is_assignable_v<T0 const&, U0 const>
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    return *this;
+  }
+
+  // [tuple.swap], tuple swap
+  constexpr void swap(tuple& other) noexcept(std::is_nothrow_swappable_v<T0>)
+  requires std::swappable<T0>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+  }
+
+  constexpr void swap(tuple const& other) const noexcept(std::is_nothrow_swappable_v<T0 const>)
+  requires std::swappable<T0 const>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+  }
+
+  template<std::equality_comparable_with<T0> U0>
+  friend constexpr bool operator==(tuple const& t, tuple<U0> const& u)
+  {
+    return t.__x0 == u.__x0;
+  }
+
+  template<__synth_three_way_comparable_with<T0> U0>
+  friend constexpr auto operator<=>(tuple const& t, tuple<U0> const& u)
+    -> common_comparison_category_t<__synth_three_way_result<T0, U0>>
+  {
+    return __synth_three_way(t.__x0, u.__x0);
+  }
+};
+
+template<class T0, class T1>
+class _LIBCPP_TEMPLATE_VIS tuple<T0, T1> {
+public:
+  [[no_unique_address]] T0 __x0;
+  [[no_unique_address]] T1 __x1;
+
+  constexpr explicit(not (__is_implicitly_constructible<T0> and
+                          __is_implicitly_constructible<T1>))
+  tuple() noexcept(is_nothrow_default_constructible_v<T0> and is_nothrow_default_constructible_v<T1>)
+  requires std::is_default_constructible_v<T0> and
+           std::is_default_constructible_v<T1>
+  : __x0()
+  , __x1()
+  {}
+
+  constexpr explicit(not (is_convertible_v<T0 const&, T0> and is_convertible_v<T1 const&, T1>))
+  tuple(T0 const& t0, T1 const& t1) noexcept(is_nothrow_copy_constructible_v<T0> and is_nothrow_copy_constructible_v<T1>)
+  requires std::is_copy_constructible_v<T0>
+  : __x0(t0)
+  , __x1(t1)
+  {}
+
+  template<class U0, class U1>
+  requires is_constructible_v<T0, U0> and
+            is_constructible_v<T1, U1> and
+            (not std::same_as<std::remove_cvref_t<U0>, allocator_arg_t> or std::same_as<std::remove_cvref_t<T0>, allocator_arg_t>)
+  constexpr explicit(not (is_convertible_v<U0, T0> and is_convertible_v<U1, T1>)) tuple(U0&& u0, U1&& u1)
+    noexcept(is_nothrow_constructible_v<T0, U0> and is_nothrow_constructible_v<T1, U1>)
+  : __x0(std::forward<U0>(u0))
+  , __x1(std::forward<U1>(u1))
+  {}
+
+  template<class U0, class U1>
+  requires is_constructible_v<T0, U0&> and
+            is_constructible_v<T1, U1&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and is_convertible_v<U1&, T1>)) tuple(tuple<U0, U1>& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  {}
+
+  template<class U0, class U1>
+  requires is_constructible_v<T0, U0 const&> and
+            is_constructible_v<T1, U1 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and is_convertible_v<U1 const&, T1>))
+  tuple(tuple<U0, U1> const& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  {}
+
+  template<class U0, class U1>
+  requires is_constructible_v<T0, U0&&> and
+            is_constructible_v<T1, U1&&>
+  constexpr explicit(not (is_convertible_v<U0&&, T0> and is_convertible_v<U1&&, T1>))
+  tuple(tuple<U0, U1>&& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  {}
+
+  template<class U0, class U1>
+  requires is_constructible_v<T0, U0 const> and
+           is_constructible_v<T1, U1 const>
+  constexpr explicit(not (is_convertible_v<U0, T0> and is_convertible_v<U1, T1>))
+  tuple(tuple<U0, U1> const&& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  {}
+
+  template<class U0, class U1>
+  requires is_constructible_v<T0, U0&> and is_constructible_v<T1, U1&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and is_convertible_v<U1&, T1>)) tuple(std::pair<U0, U1>& other)         // only if sizeof...(Types) == 2
+  : __x0(other.first)
+  , __x1(other.second)
+  {}
+
+  template<class U0, class U1>
+  requires is_constructible_v<T0, U0 const&> and is_constructible_v<T1, U1 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and is_convertible_v<U1 const&, T1>)) tuple(std::pair<U0, U1> const& other)   // only if sizeof...(Types) == 2
+  : __x0(other.first)
+  , __x1(other.second)
+  {}
+
+  template<class U0, class U1>
+  requires is_constructible_v<T0, U0> and is_constructible_v<T1, U1>
+  constexpr explicit(not (is_convertible_v<U0&&, T0> and is_convertible_v<U1&&, T1>)) tuple(std::pair<U0, U1>&& other)        // only if sizeof...(Types) == 2
+  : __x0(std::move(other.first))
+  , __x1(std::move(other.second))
+  {}
+
+  template<class U0, class U1>
+  requires is_constructible_v<T0, U0 const> and is_constructible_v<T1, U1 const>
+  constexpr explicit(not (is_convertible_v<U0 const&&, T0> and is_convertible_v<U1 const&&, T1>)) tuple(std::pair<U0, U1> const&& other)  // only if sizeof...(Types) == 2
+  : __x0(std::move(other.first))
+  , __x1(std::move(other.second))
+  {}
+
+  // template<tuple-like UTuple>
+  //     constexpr explicit(see below) tuple(UTuple&&);
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&> and
+           __constructible_with_allocator<T1, Alloc const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&> and __is_implicitly_constructible<T1, Alloc const&>))
+  tuple(allocator_arg_t, Alloc const& a)
+  : __x0(a)
+  , __x1(a)
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, T1 const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1 const&>))
+  tuple(allocator_arg_t, Alloc const& a, T0 const& t0, T1 const& t1)
+  : __x0(__construct_with_allocator<T0>(a, t0))
+  , __x1(__construct_with_allocator<T1>(a, t1))
+  {}
+
+  template<class Alloc, class U0, class U1>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&&> and
+            (not std::is_same_v<std::remove_cvref_t<U0>, allocator_arg_t> or
+             std::is_same_v<std::remove_cvref_t<T0>, allocator_arg_t>)
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1>))
+  tuple(allocator_arg_t, Alloc const& a, U0&& u0, U1&& u1)
+  : __x0(__construct_with_allocator<T0>(a, std::forward<U0>(u0)))
+  , __x1(__construct_with_allocator<T1>(a, std::forward<U0>(u1)))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, T1 const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1 const&>))
+  tuple(allocator_arg_t, Alloc const& a, tuple const& other)
+  : __x0(__construct_with_allocator<T0>(a, other.__x0))
+  , __x1(__construct_with_allocator<T1>(a, other.__x1))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0&&> and
+           __constructible_with_allocator<T1, Alloc const&, T1&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0&&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1&&>))
+  tuple(allocator_arg_t, Alloc const& a, tuple&& other)
+  : __x0(__construct_with_allocator<T0>(a, std::move(other.__x0)))
+  , __x1(__construct_with_allocator<T1>(a, std::move(other.__x1)))
+  {}
+
+  template<class Alloc, class U0, class U1>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and
+                          is_convertible_v<U1&, T1>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1>& u)
+  : __x0(__construct_with_allocator<T0>(a, u.__x0))
+  , __x1(__construct_with_allocator<T1>(a, u.__x1))
+  {}
+
+  template<class Alloc, class U0, class U1>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and
+                          is_convertible_v<U1 const&, T1>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1> const& u)
+  : __x0(__construct_with_allocator<T0>(a, u.__x0))
+  , __x1(__construct_with_allocator<T1>(a, u.__x1))
+  {}
+
+  template<class Alloc, class U0, class U1>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&&>
+  constexpr explicit(not (is_convertible_v<U0&&, T0> and
+                          is_convertible_v<U1&&, T1>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1>&& u)
+  : __x0(__construct_with_allocator<T0>(a, std::move(u.__x0)))
+  , __x1(__construct_with_allocator<T1>(a, std::move(u.__x1)))
+  {}
+
+  template<class Alloc, class U0, class U1>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&&>
+  constexpr explicit(not (is_convertible_v<U0 const&&, T0> and
+                          is_convertible_v<U1 const&&, T1>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1> const&& u)
+  : __x0(__construct_with_allocator<T0>(a, std::move(u.__x0)))
+  , __x1(__construct_with_allocator<T1>(a, std::move(u.__x1)))
+  {}
+
+  template<class Alloc, class U0, class U1>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and
+                          is_convertible_v<U1&, T1>))
+  tuple(allocator_arg_t, const Alloc& a, std::pair<U0, U1>& other)
+  : __x0(__construct_with_allocator<T0>(a, other.first))
+  , __x1(__construct_with_allocator<T1>(a, other.second))
+  {}
+
+  template<class Alloc, class U0, class U1>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and
+                          is_convertible_v<U1 const&, T1>))
+  tuple(allocator_arg_t, const Alloc& a, std::pair<U0, U1> const& other)
+  : __x0(__construct_with_allocator<T0>(a, other.first))
+  , __x1(__construct_with_allocator<T1>(a, other.second))
+  {}
+
+  template<class Alloc, class U0, class U1>
+  requires __constructible_with_allocator<T0, Alloc const&, U0> and
+           __constructible_with_allocator<T1, Alloc const&, U1>
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1>))
+  tuple(allocator_arg_t, const Alloc& a, std::pair<U0, U1>&& other)
+  : __x0(__construct_with_allocator<T0>(a, std::move(other.first)))
+  , __x1(__construct_with_allocator<T1>(a, std::move(other.second)))
+  {}
+
+  template<class Alloc, class U0, class U1>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const>
+  constexpr explicit(not (is_convertible_v<U0 const, T0> and
+                          is_convertible_v<U1 const, T1>))
+  tuple(allocator_arg_t, const Alloc& a, std::pair<U0, U1> const&& other)
+  : __x0(__construct_with_allocator<T0>(a, std::move(other.first)))
+  , __x1(__construct_with_allocator<T1>(a, std::move(other.second)))
+  {}
+
+  // template<class Alloc, tuple-like UTuple>
+  // constexpr explicit(see below) tuple(allocator_arg_t, const Alloc& a, UTuple&&);
+
+  tuple(tuple const&) = default;
+  tuple(tuple&&) = default;
+
+  // [tuple.assign], tuple assignment
+  constexpr tuple& operator=(tuple const&) = default;
+  constexpr tuple& operator=(tuple&&) = default;
+
+  constexpr const tuple& operator=(tuple const& other) const
+  requires std::is_copy_assignable_v<T0 const> and
+           std::is_copy_assignable_v<T1 const>
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    return *this;
+  }
+
+  constexpr const tuple& operator=(tuple&& other) const
+  requires std::is_assignable_v<T0 const&, T0> and
+           std::is_assignable_v<T1 const&, T1>
+  {
+    [[clang::always_inline]] swap(std::move(other));
+    return *this;
+  }
+
+  template<class U0, class U1>
+  requires std::is_assignable_v<T0&, U0 const&> and
+           std::is_assignable_v<T1&, U1 const&>
+  constexpr tuple& operator=(tuple<U0, U1> const& other)
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    return *this;
+  }
+
+  template<class U0, class U1>
+  requires std::is_assignable_v<T0 const&, U0 const&> and
+           std::is_assignable_v<T1 const&, U1 const&>
+  constexpr tuple const& operator=(tuple<U0, U1> const& other) const
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    return *this;
+  }
+
+  template<class U0, class U1>
+  requires std::is_assignable_v<T0&, U0> and
+           std::is_assignable_v<T1&, U1>
+  constexpr tuple& operator=(tuple<U0, U1>&& other)
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    return *this;
+  }
+
+  template<class U0, class U1>
+  requires std::is_assignable_v<T0 const&, U0 const> and
+           std::is_assignable_v<T1 const&, U1 const>
+  constexpr tuple const& operator=(tuple<U0, U1> const&& other) const
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    return *this;
+  }
+
+  template<class U0, class U1>
+  requires std::is_assignable_v<T0&, U0 const&> and
+           std::is_assignable_v<T1&, U1 const&>
+  constexpr tuple& operator=(std::pair<U0, U1> const& other)
+  {
+    [[clang::always_inline]] __x0 = other.first;
+    [[clang::always_inline]] __x1 = other.second;
+    return *this;
+  }
+
+  template<class U0, class U1>
+  requires std::is_assignable_v<T0 const&, U0 const&> and
+           std::is_assignable_v<T1 const&, U1 const&>
+  constexpr tuple const& operator=(std::pair<U0, U1> const& other) const
+  {
+    [[clang::always_inline]] __x0 = other.first;
+    [[clang::always_inline]] __x1 = other.second;
+    return *this;
+  }
+
+  template<class U0, class U1>
+  requires std::is_assignable_v<T0&, U0> and
+           std::is_assignable_v<T1&, U1>
+  constexpr tuple& operator=(std::pair<U0, U1>&& other)
+  {
+    [[clang::always_inline]] __x0 = std::move(other.first);
+    [[clang::always_inline]] __x1 = std::move(other.second);
+    return *this;
+  }
+
+  template<class U0, class U1>
+  requires std::is_assignable_v<T0 const&, U0 const> and
+           std::is_assignable_v<T1 const&, U1 const>
+  constexpr tuple const& operator=(std::pair<U0, U1> const&& other) const
+  {
+    [[clang::always_inline]] __x0 = std::move(other.first);
+    [[clang::always_inline]] __x1 = std::move(other.second);
+    return *this;
+  }
+
+  // template<tuple-like UTuple>
+  // constexpr tuple& operator=(UTuple&&);
+  // template<tuple-like UTuple>
+  // constexpr const tuple& operator=(UTuple&&) const;
+
+  // [tuple.swap], tuple swap
+
+  constexpr void swap(tuple& other) noexcept(std::is_nothrow_swappable_v<T0> and
+                                             std::is_nothrow_swappable_v<T1>)
+  requires std::swappable<T0> and
+           std::swappable<T1>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+  }
+
+  constexpr void swap(tuple const& other) const noexcept(std::is_nothrow_swappable_v<T0 const> and
+                                                         std::is_nothrow_swappable_v<T1 const>)
+  requires std::swappable<T0 const> and
+           std::swappable<T1 const>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+  }
+
+  template<std::equality_comparable_with<T0> U0,
+           std::equality_comparable_with<T1> U1>
+  friend constexpr bool operator==(tuple const& t, tuple<U0, U1> const& u)
+  {
+      return t.__x0 == u.__x0 and
+          t.__x1 == u.__x1;
+  }
+
+  template<__synth_three_way_comparable_with<T0> U0,
+           __synth_three_way_comparable_with<T1> U1>
+  friend constexpr auto operator<=>(tuple const& t, tuple<U0, U1> const& u)
+    -> common_comparison_category_t<__synth_three_way_result<T0, U0>,
+                                    __synth_three_way_result<T1, U1>>
+  {
+    if (auto result = __synth_three_way(t.__x0, u.__x0); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    return __synth_three_way(t.__x1, u.__x1);
+  }
+};
+
+template<class T0, class T1, class T2>
+class _LIBCPP_TEMPLATE_VIS tuple<T0, T1, T2> {
+public:
+  [[no_unique_address]] T0 __x0;
+  [[no_unique_address]] T1 __x1;
+  [[no_unique_address]] T2 __x2;
+
+  constexpr explicit(not (__is_implicitly_constructible<T0> and
+                          __is_implicitly_constructible<T1> and
+                          __is_implicitly_constructible<T2>))
+  tuple()
+  requires std::is_default_constructible_v<T0> and
+           std::is_default_constructible_v<T1> and
+           std::is_default_constructible_v<T2>
+  : __x0()
+  , __x1()
+  , __x2()
+  {}
+
+  constexpr explicit(not (is_convertible_v<T0 const&, T0> and
+                          is_convertible_v<T1 const&, T1> and
+                          is_convertible_v<T2 const&, T2>))
+  tuple(T0 const& t0, T1 const& t1, T2 const& t2)
+  requires std::is_copy_constructible_v<T0> and
+           std::is_copy_constructible_v<T1> and
+           std::is_copy_constructible_v<T2>
+  : __x0(t0)
+  , __x1(t1)
+  , __x2(t2)
+  {}
+
+  template<class U0, class U1, class U2>
+  requires is_constructible_v<T0, U0> and
+           is_constructible_v<T1, U1> and
+           is_constructible_v<T2, U2> and
+           (not std::same_as<std::remove_cvref_t<U0>, allocator_arg_t> or
+                std::same_as<std::remove_cvref_t<T0>, allocator_arg_t>)
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1> and
+                          is_convertible_v<U2, T2>))
+  tuple(U0&& u0, U1&& u1, U2&& u2)
+  : __x0(std::forward<U0>(u0))
+  , __x1(std::forward<U1>(u1))
+  , __x2(std::forward<U2>(u2))
+  {}
+
+  template<class U0, class U1, class U2>
+  requires is_constructible_v<T0, U0&> and
+           is_constructible_v<T1, U1&> and
+           is_constructible_v<T2, U2&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and
+                          is_convertible_v<U1&, T1> and
+                          is_convertible_v<U2&, T2>))
+  tuple(tuple<U0, U1, U2>& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  {}
+
+  template<class U0, class U1, class U2>
+  requires is_constructible_v<T0, U0 const&> and
+           is_constructible_v<T1, U1 const&> and
+           is_constructible_v<T2, U2 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and
+                          is_convertible_v<U1 const&, T1> and
+                          is_convertible_v<U2 const&, T2>))
+  tuple(tuple<U0, U1, U2> const& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  {}
+
+  template<class U0, class U1, class U2>
+  requires is_constructible_v<T0, U0&&> and
+           is_constructible_v<T1, U1&&> and
+           is_constructible_v<T2, U2&&>
+  constexpr explicit(not (is_convertible_v<U0&&, T0> and
+                          is_convertible_v<U1&&, T1> and
+                          is_convertible_v<U2&&, T2>))
+  tuple(tuple<U0, U1, U2>&& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  {}
+
+  template<class U0, class U1, class U2>
+  requires is_constructible_v<T0, U0 const&&> and
+           is_constructible_v<T1, U1 const&&> and
+           is_constructible_v<T2, U2 const&&>
+  constexpr explicit(not (is_convertible_v<U0 const&&, T0> and
+                          is_convertible_v<U1 const&&, T1> and
+                          is_convertible_v<U2 const&&, T2>))
+  tuple(tuple<U0, U1, U2> const&& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&> and
+           __constructible_with_allocator<T1, Alloc const&> and
+           __constructible_with_allocator<T2, Alloc const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&> and
+                          __is_implicitly_constructible<T1, Alloc const&> and
+                          __is_implicitly_constructible<T2, Alloc const&>))
+  tuple(allocator_arg_t, Alloc const& a)
+  : __x0(__construct_with_allocator<T0>(a))
+  , __x1(__construct_with_allocator<T1>(a))
+  , __x2(__construct_with_allocator<T2>(a))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, T1 const&> and
+           __constructible_with_allocator<T2, Alloc const&, T2 const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, T2 const&>))
+  tuple(allocator_arg_t, Alloc const& a, T0 const& t0, T1 const& t1, T2 const& t2)
+  : __x0(__construct_with_allocator<T0>(a, t0))
+  , __x1(__construct_with_allocator<T1>(a, t1))
+  , __x2(__construct_with_allocator<T2>(a, t2))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2>
+  requires __constructible_with_allocator<T0, Alloc const&, U0> and
+           __constructible_with_allocator<T1, Alloc const&, U1> and
+           __constructible_with_allocator<T2, Alloc const&, U2> and
+           (not std::is_same_v<std::remove_cvref_t<U0>, allocator_arg_t> or
+                std::is_same_v<std::remove_cvref_t<T0>, allocator_arg_t>)
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2>))
+  tuple(allocator_arg_t, Alloc const& a, U0&& u0, U1&& u1, U2&& u2)
+  : __x0(__construct_with_allocator<T0>(a, std::forward<U0>(u0)))
+  , __x1(__construct_with_allocator<T1>(a, std::forward<U0>(u1)))
+  , __x2(__construct_with_allocator<T2>(a, std::forward<U0>(u2)))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, T1 const&> and
+           __constructible_with_allocator<T2, Alloc const&, T2 const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, T2 const&>))
+  tuple(allocator_arg_t, Alloc const& a, tuple const& other)
+  : __x0(__construct_with_allocator<T0>(a, other.__x0))
+  , __x1(__construct_with_allocator<T1>(a, other.__x1))
+  , __x2(__construct_with_allocator<T2>(a, other.__x2))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0&&> and
+           __constructible_with_allocator<T1, Alloc const&, T1&&> and
+           __constructible_with_allocator<T2, Alloc const&, T2&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0&&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1&&> and
+                          __is_implicitly_constructible<T2, Alloc const&, T2&&>))
+  tuple(allocator_arg_t, Alloc const& a, tuple&& other)
+  : __x0(__construct_with_allocator<T0>(a, std::move(other.__x0)))
+  , __x1(__construct_with_allocator<T1>(a, std::move(other.__x1)))
+  , __x2(__construct_with_allocator<T2>(a, std::move(other.__x2)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and
+                          is_convertible_v<U1&, T1> and
+                          is_convertible_v<U2&, T2>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1, U2>& u)
+  : __x0(__construct_with_allocator<T0>(a, u.__x0))
+  , __x1(__construct_with_allocator<T1>(a, u.__x1))
+  , __x2(__construct_with_allocator<T2>(a, u.__x2))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&> and
+           __constructible_with_allocator<T2, Alloc const&, U2 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and
+                          is_convertible_v<U1 const&, T1> and
+                          is_convertible_v<U2 const&, T2>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1, U2> const& u)
+  : __x0(__construct_with_allocator<T0>(a, u.__x0))
+  , __x1(__construct_with_allocator<T1>(a, u.__x1))
+  , __x2(__construct_with_allocator<T2>(a, u.__x2))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&&>
+  constexpr explicit(not (is_convertible_v<U0&&, T0> and
+                          is_convertible_v<U1&&, T1> and
+                          is_convertible_v<U2&&, T2>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1, U2>&& u)
+  : __x0(__construct_with_allocator<T0>(a, std::move(u.__x0)))
+  , __x1(__construct_with_allocator<T1>(a, std::move(u.__x1)))
+  , __x2(__construct_with_allocator<T2>(a, std::move(u.__x2)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&&>
+  constexpr explicit(not (is_convertible_v<U0 const&&, T0> and
+                          is_convertible_v<U1 const&&, T1> and
+                          is_convertible_v<U1 const&&, T2>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1, U2> const&& u)
+  : __x0(__construct_with_allocator<T0>(a, std::move(u.__x0)))
+  , __x1(__construct_with_allocator<T1>(a, std::move(u.__x1)))
+  , __x2(__construct_with_allocator<T2>(a, std::move(u.__x2)))
+  {}
+
+  // template<class Alloc, tuple-like UTuple>
+  // constexpr explicit(see below) tuple(allocator_arg_t, const Alloc& a, UTuple&&);
+
+  tuple(tuple const&) = default;
+  tuple(tuple&&) = default;
+
+  // [tuple.assign], tuple assignment
+  constexpr tuple& operator=(tuple const&) = default;
+  constexpr tuple& operator=(tuple&&) = default;
+
+  constexpr const tuple& operator=(tuple const& other) const
+  requires std::is_copy_assignable_v<T0 const> and
+           std::is_copy_assignable_v<T1 const> and
+           std::is_copy_assignable_v<T2 const>
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    return *this;
+  }
+
+  constexpr const tuple& operator=(tuple&& other) const
+  requires std::is_assignable_v<T0 const&, T0> and
+           std::is_assignable_v<T1 const&, T1> and
+           std::is_assignable_v<T2 const&, T2>
+  {
+    [[clang::always_inline]] swap(std::move(other));
+    return *this;
+  }
+
+  template<class U0, class U1, class U2>
+  requires std::is_assignable_v<T0&, U0 const&> and
+           std::is_assignable_v<T1&, U1 const&> and
+           std::is_assignable_v<T2&, U2 const&>
+  constexpr tuple& operator=(tuple<U0, U1, U2> const& other)
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2>
+  requires std::is_assignable_v<T0 const&, U0 const&> and
+           std::is_assignable_v<T1 const&, U1 const&> and
+           std::is_assignable_v<T2 const&, U2 const&>
+  constexpr tuple const& operator=(tuple<U0, U1, U2> const& other) const
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2>
+  requires std::is_assignable_v<T0&, U0> and
+           std::is_assignable_v<T1&, U1> and
+           std::is_assignable_v<T2&, U2>
+  constexpr tuple& operator=(tuple<U0, U1, U2>&& other)
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    return *this;
+  }
+
+  template<class U0, class U1, class U2>
+  requires std::is_assignable_v<T0 const&, U0 const> and
+           std::is_assignable_v<T1 const&, U1 const> and
+           std::is_assignable_v<T2 const&, U2 const>
+  constexpr tuple const& operator=(tuple<U0, U1, U2> const&& other) const
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    return *this;
+  }
+
+  // template<tuple-like UTuple>
+  // constexpr tuple& operator=(UTuple&&);
+  // template<tuple-like UTuple>
+  // constexpr const tuple& operator=(UTuple&&) const;
+
+  // [tuple.swap], tuple swap
+
+  constexpr void swap(tuple& other) noexcept(std::is_nothrow_swappable_v<T0> and
+                                             std::is_nothrow_swappable_v<T1> and
+                                             std::is_nothrow_swappable_v<T2>)
+  requires std::swappable<T0> and
+           std::swappable<T1> and
+           std::swappable<T2>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+  }
+
+  constexpr void swap(tuple const& other) const noexcept(std::is_nothrow_swappable_v<T0 const> and
+                                                         std::is_nothrow_swappable_v<T1 const> and
+                                                         std::is_nothrow_swappable_v<T2 const>)
+  requires std::swappable<T0 const> and
+           std::swappable<T1 const> and
+           std::swappable<T2 const>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+  }
+
+  template<std::equality_comparable_with<T0> U0,
+           std::equality_comparable_with<T1> U1,
+           std::equality_comparable_with<T2> U2>
+  friend constexpr bool operator==(tuple const& t, tuple<U0, U1, U2> const& u)
+  {
+      return t.__x0 == u.__x0 and
+             t.__x1 == u.__x1 and
+             t.__x2 == u.__x2;
+  }
+
+  template<__synth_three_way_comparable_with<T0> U0,
+           __synth_three_way_comparable_with<T1> U1,
+           __synth_three_way_comparable_with<T2> U2>
+  friend constexpr auto operator<=>(tuple const& t, tuple<U0, U1, U2> const& u)
+  -> common_comparison_category_t<__synth_three_way_result<T0, U0>,
+                                  __synth_three_way_result<T1, U1>,
+                                  __synth_three_way_result<T2, U2>>
+  {
+    if (auto result = __synth_three_way(t.__x0, u.__x0); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x1, u.__x1); result != std::partial_ordering::equivalent) {
+      return __synth_three_way(t.__x1, u.__x1);
+    }
+
+    return __synth_three_way(t.__x2, u.__x2);
+  }
+};
+/*
+template<class T0, class T1, class T2, class T3>
+class _LIBCPP_TEMPLATE_VIS tuple<T0, T1, T2, T3> {
+public:
+  [[no_unique_address]] T0 __x0;
+  [[no_unique_address]] T1 __x1;
+  [[no_unique_address]] T2 __x2;
+  [[no_unique_address]] T3 __x3;
+
+  constexpr explicit(not (__is_implicitly_constructible<T0> and
+                          __is_implicitly_constructible<T1> and
+                          __is_implicitly_constructible<T2> and
+                          __is_implicitly_constructible<T3>))
+  tuple()
+  requires std::is_default_constructible_v<T0> and
+           std::is_default_constructible_v<T1> and
+           std::is_default_constructible_v<T2> and
+           std::is_default_constructible_v<T3>
+  : __x0()
+  , __x1()
+  , __x2()
+  , __x3()
+  {}
+
+  constexpr explicit(not (is_convertible_v<T0 const&, T0> and
+                          is_convertible_v<T1 const&, T1> and
+                          is_convertible_v<T2 const&, T2> and
+                          is_convertible_v<T3 const&, T3>))
+  tuple(T0 const& t0, T1 const& t1, T2 const& t2, T3 const& t3)
+  requires std::is_copy_constructible_v<T0> and
+           std::is_copy_constructible_v<T1> and
+           std::is_copy_constructible_v<T2> and
+           std::is_copy_constructible_v<T3>
+  : __x0(t0)
+  , __x1(t1)
+  , __x2(t2)
+  , __x3(t3)
+  {}
+
+  template<class U0, class U1, class U2, class U3>
+  requires is_constructible_v<T0, U0> and
+           is_constructible_v<T1, U1> and
+           is_constructible_v<T2, U2> and
+           is_constructible_v<T3, U3>
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1> and
+                          is_convertible_v<U2, T2> and
+                          is_convertible_v<U3, T3>))
+  tuple(U0&& u0, U1&& u1, U2&& u2, U3&& u3)
+  : __x0(std::forward<U0>(u0))
+  , __x1(std::forward<U1>(u1))
+  , __x2(std::forward<U2>(u2))
+  , __x3(std::forward<U3>(u3))
+  {}
+
+  template<class U0, class U1, class U2, class U3>
+  requires is_constructible_v<T0, U0&> and
+           is_constructible_v<T1, U1&> and
+           is_constructible_v<T2, U2&> and
+           is_constructible_v<T3, U3&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and
+                          is_convertible_v<U1&, T1> and
+                          is_convertible_v<U2&, T2> and
+                          is_convertible_v<U3&, T3>))
+  tuple(tuple<U0, U1, U2, U3>& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  , __x3(std::forward<U3>(t.__x3))
+  {}
+
+  template<class U0, class U1, class U2, class U3>
+  requires is_constructible_v<T0, U0 const&> and
+           is_constructible_v<T1, U1 const&> and
+           is_constructible_v<T2, U2 const&> and
+           is_constructible_v<T3, U3 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and
+                          is_convertible_v<U1 const&, T1> and
+                          is_convertible_v<U2 const&, T2> and
+                          is_convertible_v<U3 const&, T3>))
+  tuple(tuple<U0, U1, U2, U3> const& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  , __x3(std::forward<U3 const>(t.__x3))
+  {}
+
+  template<class U0, class U1, class U2, class U3>
+  requires is_constructible_v<T0, U0&&> and
+           is_constructible_v<T1, U1&&> and
+           is_constructible_v<T2, U2&&> and
+           is_constructible_v<T3, U3&&>
+  constexpr explicit(not (is_convertible_v<U0&&, T0> and
+                          is_convertible_v<U1&&, T1> and
+                          is_convertible_v<U2&&, T2> and
+                          is_convertible_v<U3&&, T3>))
+  tuple(tuple<U0, U1, U2, U3>&& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  , __x3(std::forward<U3>(t.__x3))
+  {}
+
+  template<class U0, class U1, class U2, class U3>
+  requires is_constructible_v<T0, U0 const&&> and
+           is_constructible_v<T1, U1 const&&> and
+           is_constructible_v<T2, U2 const&&> and
+           is_constructible_v<T3, U3 const&&>
+  constexpr explicit(not (is_convertible_v<U0 const&&, T0> and
+                          is_convertible_v<U1 const&&, T1> and
+                          is_convertible_v<U2 const&&, T2> and
+                          is_convertible_v<U3 const&&, T3>))
+  tuple(tuple<U0, U1, U2, U3> const&& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  , __x3(std::forward<U3 const>(t.__x3))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&> and
+           __constructible_with_allocator<T1, Alloc const&> and
+           __constructible_with_allocator<T2, Alloc const&> and
+           __constructible_with_allocator<T3, Alloc const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&> and
+                          __is_implicitly_constructible<T1, Alloc const&> and
+                          __is_implicitly_constructible<T2, Alloc const&> and
+                          __is_implicitly_constructible<T3, Alloc const&>))
+  tuple(allocator_arg_t, Alloc const& a)
+  : __x0(__construct_with_allocator<T0>(a))
+  , __x1(__construct_with_allocator<T1>(a))
+  , __x2(__construct_with_allocator<T2>(a))
+  , __x3(__construct_with_allocator<T3>(a))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, T1 const&> and
+           __constructible_with_allocator<T2, Alloc const&, T2 const&> and
+           __constructible_with_allocator<T3, Alloc const&, T3 const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, T2 const&> and
+                          __is_implicitly_constructible<T3, Alloc const&, T3 const&>))
+  tuple(allocator_arg_t, Alloc const& a, T0 const& t0, T1 const& t1, T2 const& t2, T3 const& t3)
+  : __x0(__construct_with_allocator<T0>(a, t0))
+  , __x1(__construct_with_allocator<T1>(a, t1))
+  , __x2(__construct_with_allocator<T2>(a, t2))
+  , __x3(__construct_with_allocator<T3>(a, t3))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&&> and
+           __constructible_with_allocator<T3, Alloc const&, U3&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3>))
+  tuple(allocator_arg_t, Alloc const& a, U0&& u0, U1&& u1, U2&& u2, U3&& u3)
+  : __x0(__construct_with_allocator<T0>(a, std::forward<U0>(u0)))
+  , __x1(__construct_with_allocator<T1>(a, std::forward<U0>(u1)))
+  , __x2(__construct_with_allocator<T2>(a, std::forward<U0>(u2)))
+  , __x3(__construct_with_allocator<T3>(a, std::forward<U0>(u3)))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, T1 const&> and
+           __constructible_with_allocator<T2, Alloc const&, T2 const&> and
+           __constructible_with_allocator<T3, Alloc const&, T3 const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, T2 const&> and
+                          __is_implicitly_constructible<T3, Alloc const&, T3 const&>))
+  tuple(allocator_arg_t, Alloc const& a, tuple const& other)
+  : __x0(__construct_with_allocator<T0>(a, other.__x0))
+  , __x1(__construct_with_allocator<T1>(a, other.__x1))
+  , __x2(__construct_with_allocator<T2>(a, other.__x2))
+  , __x3(__construct_with_allocator<T3>(a, other.__x3))
+  {}
+
+  template<class Alloc>
+  requires __constructible_with_allocator<T0, Alloc const&, T0&&> and
+           __constructible_with_allocator<T1, Alloc const&, T1&&> and
+           __constructible_with_allocator<T2, Alloc const&, T2&&> and
+           __constructible_with_allocator<T3, Alloc const&, T3&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0&&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1&&> and
+                          __is_implicitly_constructible<T2, Alloc const&, T2&&> and
+                          __is_implicitly_constructible<T3, Alloc const&, T3&&>))
+  tuple(allocator_arg_t, Alloc const& a, tuple&& other)
+  : __x0(__construct_with_allocator<T0>(a, std::move(other.__x0)))
+  , __x1(__construct_with_allocator<T1>(a, std::move(other.__x1)))
+  , __x2(__construct_with_allocator<T2>(a, std::move(other.__x2)))
+  , __x3(__construct_with_allocator<T3>(a, std::move(other.__x3)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&> and
+           __constructible_with_allocator<T3, Alloc const&, U3&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and
+                          is_convertible_v<U1&, T1> and
+                          is_convertible_v<U2&, T2> and
+                          is_convertible_v<U3&, T3>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1, U2, U3>& u)
+  : __x0(__construct_with_allocator<T0>(a, u.__x0))
+  , __x1(__construct_with_allocator<T1>(a, u.__x1))
+  , __x2(__construct_with_allocator<T2>(a, u.__x2))
+  , __x3(__construct_with_allocator<T3>(a, u.__x3))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&> and
+           __constructible_with_allocator<T2, Alloc const&, U2 const&> and
+           __constructible_with_allocator<T3, Alloc const&, U3 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and
+                          is_convertible_v<U1 const&, T1> and
+                          is_convertible_v<U2 const&, T2> and
+                          is_convertible_v<U3 const&, T3>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1, U2, U3> const& u)
+  : __x0(__construct_with_allocator<T0>(a, u.__x0))
+  , __x1(__construct_with_allocator<T1>(a, u.__x1))
+  , __x2(__construct_with_allocator<T2>(a, u.__x2))
+  , __x3(__construct_with_allocator<T3>(a, u.__x3))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&&> and
+           __constructible_with_allocator<T3, Alloc const&, U3&&>
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1> and
+                          is_convertible_v<U2, T2> and
+                          is_convertible_v<U3, T3>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1, U2, U3>&& u)
+  : __x0(__construct_with_allocator<T0>(a, std::move(u.__x0)))
+  , __x1(__construct_with_allocator<T1>(a, std::move(u.__x1)))
+  , __x2(__construct_with_allocator<T2>(a, std::move(u.__x2)))
+  , __x3(__construct_with_allocator<T3>(a, std::move(u.__x3)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2 const&&> and
+           __constructible_with_allocator<T3, Alloc const&, U3 const&&>
+  constexpr explicit(not (is_convertible_v<U0 const, T0> and
+                          is_convertible_v<U1 const, T1> and
+                          is_convertible_v<U2 const, T2> and
+                          is_convertible_v<U3 const, T3>))
+  tuple(allocator_arg_t, Alloc const& a, tuple<U0, U1, U2, U3> const& u)
+  : __x0(__construct_with_allocator<T0>(a, std::move(u.__x0)))
+  , __x1(__construct_with_allocator<T1>(a, std::move(u.__x1)))
+  , __x2(__construct_with_allocator<T2>(a, std::move(u.__x2)))
+  , __x3(__construct_with_allocator<T3>(a, std::move(u.__x3)))
+  {}
+
+  // template<class Alloc, tuple-like UTuple>
+  // constexpr explicit(see below) tuple(allocator_arg_t, const Alloc& a, UTuple&&);
+
+  tuple(tuple const&) = default;
+  tuple(tuple&&) = default;
+
+  // [tuple.assign], tuple assignment
+  constexpr tuple& operator=(tuple const&) = default;
+  constexpr tuple& operator=(tuple&&) = default;
+
+  constexpr const tuple& operator=(tuple const& other) const
+  requires std::is_copy_assignable_v<T0 const> and
+           std::is_copy_assignable_v<T1 const> and
+           std::is_copy_assignable_v<T2 const> and
+           std::is_copy_assignable_v<T3 const>
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    return *this;
+  }
+
+  constexpr const tuple& operator=(tuple&& other) const
+  requires std::is_assignable_v<T0 const&, T0> and
+           std::is_assignable_v<T1 const&, T1> and
+           std::is_assignable_v<T2 const&, T2> and
+           std::is_assignable_v<T3 const&, T3>
+  {
+    [[clang::always_inline]] swap(std::move(other));
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3>
+  requires std::is_assignable_v<T0&, U0 const&> and
+           std::is_assignable_v<T1&, U1 const&> and
+           std::is_assignable_v<T2&, U2 const&> and
+           std::is_assignable_v<T3&, U3 const&>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3> const& other)
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3>
+  requires std::is_assignable_v<T0 const&, U0 const&> and
+           std::is_assignable_v<T1 const&, U1 const&> and
+           std::is_assignable_v<T2 const&, U2 const&> and
+           std::is_assignable_v<T3 const&, U3 const&>
+  constexpr tuple const& operator=(tuple<U0, U1, U2, U3> const& other) const
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__32;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3>
+  requires std::is_assignable_v<T0&, U0> and
+           std::is_assignable_v<T1&, U1> and
+           std::is_assignable_v<T2&, U2> and
+           std::is_assignable_v<T3&, U3>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3>&& other)
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    [[clang::always_inline]] __x3 = std::move(other.__x3);
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3>
+  requires is_assignable_v<T0 const&, U0 const> and
+           is_assignable_v<T1 const&, U1 const> and
+           is_assignable_v<T2 const&, U2 const> and
+           is_assignable_v<T3 const&, U3 const>
+  constexpr tuple const& operator=(tuple<U0, U1, U2> const&& other) const
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    [[clang::always_inline]] __x3 = std::move(other.__x3);
+    return *this;
+  }
+
+  // template<tuple-like UTuple>
+  // constexpr tuple& operator=(UTuple&&);
+  // template<tuple-like UTuple>
+  // constexpr const tuple& operator=(UTuple&&) const;
+
+  // [tuple.swap], tuple swap
+
+  constexpr void swap(tuple& other) noexcept(is_nothrow_swappable_v<T0> and
+                                             is_nothrow_swappable_v<T1> and
+                                             is_nothrow_swappable_v<T2> and
+                                             is_nothrow_swappable_v<T3>)
+  requires swappable<T0> and
+           swappable<T1> and
+           swappable<T2> and
+           swappable<T3>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+    [[clang::always_inline]] std::ranges::swap(__x3, other.__x3);
+  }
+
+  constexpr void swap(tuple const& other) const noexcept(is_nothrow_swappable_v<T0 const> and
+                                                         is_nothrow_swappable_v<T1 const> and
+                                                         is_nothrow_swappable_v<T2 const> and
+                                                         is_nothrow_swappable_v<T3 const>)
+  requires swappable<T0 const> and
+           swappable<T1 const> and
+           swappable<T2 const> and
+           swappable<T3 const>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+    [[clang::always_inline]] std::ranges::swap(__x3, other.__x3);
+  }
+
+  template<equality_comparable_with<T0> U0,
+           equality_comparable_with<T1> U1,
+           equality_comparable_with<T2> U2,
+           equality_comparable_with<T3> U3>
+  friend constexpr bool operator==(tuple const& t, tuple<U0, U1, U2, U3> const& u)
+  {
+      return t.__x0 == u.__x0 and
+             t.__x1 == u.__x1 and
+             t.__x2 == u.__x2 and
+             t.__x3 == u.__x3;
+  }
+
+  template<__synth_three_way_comparable_with<T0> U0,
+           __synth_three_way_comparable_with<T1> U1,
+           __synth_three_way_comparable_with<T2> U2,
+           __synth_three_way_comparable_with<T3> U3>
+  friend constexpr auto operator<=>(tuple const& t, tuple<U0, U1, U2, U3> const& u)
+  -> common_comparison_category_t<__synth_three_way_result<T0, U0>,
+                                  __synth_three_way_result<T1, U1>,
+                                  __synth_three_way_result<T2, U2>,
+                                  __synth_three_way_result<T3, U3>>
+  {
+    if (auto result = __synth_three_way(t.__x0, u.__x0); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x1, u.__x1); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x2, u.__x2); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    return __synth_three_way(t.__x3, u.__x3);
+  }
+};
+
+template<class T0, class T1, class T2, class T3, class T4>
+class _LIBCPP_TEMPLATE_VIS tuple<T0, T1, T2, T3, T4> {
+public:
+  [[no_unique_address]] T0 __x0;
+  [[no_unique_address]] T1 __x1;
+  [[no_unique_address]] T2 __x2;
+  [[no_unique_address]] T3 __x3;
+  [[no_unique_address]] T4 __x4;
+
+  constexpr explicit(not (__is_implicitly_constructible<T0> and
+                          __is_implicitly_constructible<T1> and
+                          __is_implicitly_constructible<T2> and
+                          __is_implicitly_constructible<T3> and
+                          __is_implicitly_constructible<T4>))
+  tuple()
+  requires std::is_default_constructible_v<T0> and
+           std::is_default_constructible_v<T1> and
+           std::is_default_constructible_v<T2> and
+           std::is_default_constructible_v<T3> and
+           std::is_default_constructible_v<T4>
+  : __x0()
+  , __x1()
+  , __x2()
+  , __x3()
+  , __x4()
+  {}
+
+  constexpr explicit(not (is_convertible_v<T0 const&, T0> and
+                          is_convertible_v<T1 const&, T1> and
+                          is_convertible_v<T2 const&, T2> and
+                          is_convertible_v<T3 const&, T3> and
+                          is_convertible_v<T4 const&, T4>))
+  tuple(T0 const& t0, T1 const& t1, T2 const& t2, T3 const& t3, T4 const& t4)
+  requires std::is_copy_constructible_v<T0> and
+           std::is_copy_constructible_v<T1> and
+           std::is_copy_constructible_v<T2> and
+           std::is_copy_constructible_v<T3> and
+           std::is_copy_constructible_v<T4>
+  : __x0(t0)
+  , __x1(t1)
+  , __x2(t2)
+  , __x3(t3)
+  , __x4(t4)
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4>
+  requires is_constructible_v<T0, U0> and
+           is_constructible_v<T1, U1> and
+           is_constructible_v<T2, U2> and
+           is_constructible_v<T3, U3> and
+           is_constructible_v<T4, U4>
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1> and
+                          is_convertible_v<U2, T2> and
+                          is_convertible_v<U3, T3> and
+                          is_convertible_v<U4, T4>))
+  tuple(U0&& u0, U1&& u1, U2&& u2, U3&& u3, U4&& u4)
+  : __x0(std::forward<U0>(u0))
+  , __x1(std::forward<U1>(u1))
+  , __x2(std::forward<U2>(u2))
+  , __x3(std::forward<U3>(u3))
+  , __x4(std::forward<U4>(u4))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4>
+  requires is_constructible_v<T0, U0&> and
+           is_constructible_v<T1, U1&> and
+           is_constructible_v<T2, U2&> and
+           is_constructible_v<T3, U3&> and
+           is_constructible_v<T4, U4&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and
+                          is_convertible_v<U1&, T1> and
+                          is_convertible_v<U2&, T2> and
+                          is_convertible_v<U3&, T3> and
+                          is_convertible_v<U4&, T4>))
+  tuple(tuple<U0, U1, U2, U3, U4>& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  , __x3(std::forward<U3>(t.__x3))
+  , __x4(std::forward<U4>(t.__x4))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4>
+  requires is_constructible_v<T0, U0 const&> and
+           is_constructible_v<T1, U1 const&> and
+           is_constructible_v<T2, U2 const&> and
+           is_constructible_v<T3, U3 const&> and
+           is_constructible_v<T4, U4 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and
+                          is_convertible_v<U1 const&, T1> and
+                          is_convertible_v<U2 const&, T2> and
+                          is_convertible_v<U3 const&, T3> and
+                          is_convertible_v<U4 const&, T4>))
+  tuple(tuple<U0, U1, U2, U3, U4> const& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  , __x3(std::forward<U3 const>(t.__x3))
+  , __x4(std::forward<U4 const>(t.__x4))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4>
+  requires is_constructible_v<T0, U0> and
+           is_constructible_v<T1, U1> and
+           is_constructible_v<T2, U2> and
+           is_constructible_v<T3, U3> and
+           is_constructible_v<T4, U4>
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1> and
+                          is_convertible_v<U2, T2> and
+                          is_convertible_v<U3, T3> and
+                          is_convertible_v<U4, T4>))
+  tuple(tuple<U0, U1, U2, U3, U4>&& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  , __x3(std::forward<U3>(t.__x3))
+  , __x4(std::forward<U4>(t.__x4))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4>
+  requires is_constructible_v<T0, U0 const> and
+           is_constructible_v<T1, U1 const> and
+           is_constructible_v<T2, U2 const> and
+           is_constructible_v<T3, U3 const> and
+           is_constructible_v<T4, U4 const>
+  constexpr explicit(not (is_convertible_v<U0 const, T0> and
+                          is_convertible_v<U1 const, T1> and
+                          is_convertible_v<U2 const, T2> and
+                          is_convertible_v<U3 const, T3> and
+                          is_convertible_v<U4 const, T4>))
+  tuple(tuple<U0, U1, U2, U3, U4> const&& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  , __x3(std::forward<U3 const>(t.__x3))
+  , __x4(std::forward<U4 const>(t.__x4))
+  {}
+
+  template<class Alloc>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&> and
+                          __is_implicitly_constructible<T1, Alloc const&> and
+                          __is_implicitly_constructible<T2, Alloc const&> and
+                          __is_implicitly_constructible<T3, Alloc const&> and
+                          __is_implicitly_constructible<T4, Alloc const&>))
+  tuple(allocator_arg_t, Alloc const& a)
+  requires std::__constructible_with_allocator<T0, Alloc const&> and
+           std::__constructible_with_allocator<T1, Alloc const&> and
+           std::__constructible_with_allocator<T2, Alloc const&> and
+           std::__constructible_with_allocator<T3, Alloc const&> and
+           std::__constructible_with_allocator<T4, Alloc const&>
+  : __x0(__construct_with_allocator<T0>(a))
+  , __x1(__construct_with_allocator<T1>(a))
+  , __x2(__construct_with_allocator<T2>(a))
+  , __x3(__construct_with_allocator<T3>(a))
+  , __x4(__construct_with_allocator<T4>(a))
+  {}
+
+  template<class Alloc>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, T2 const&> and
+                          __is_implicitly_constructible<T3, Alloc const&, T3 const&> and
+                          __is_implicitly_constructible<T4, Alloc const&, T4 const&>))
+  tuple(allocator_arg_t, Alloc const& a, T0 const& t0, T1 const& t1, T2 const& t2, T3 const& t3, T4 const& t4)
+  requires std::__constructible_with_allocator<T0, Alloc const&, T0 const&> and
+           std::__constructible_with_allocator<T1, Alloc const&, T1 const&> and
+           std::__constructible_with_allocator<T2, Alloc const&, T2 const&> and
+           std::__constructible_with_allocator<T3, Alloc const&, T3 const&> and
+           std::__constructible_with_allocator<T4, Alloc const&, T4 const&>
+  : __x0(__construct_with_allocator<T0>(a, t0))
+  , __x1(__construct_with_allocator<T1>(a, t1))
+  , __x2(__construct_with_allocator<T2>(a, t2))
+  , __x3(__construct_with_allocator<T3>(a, t3))
+  , __x4(__construct_with_allocator<T4>(a, t4))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4>
+  requires __constructible_with_allocator<T0, Alloc const&, U0> and
+           __constructible_with_allocator<T1, Alloc const&, U1> and
+           __constructible_with_allocator<T2, Alloc const&, U2> and
+           __constructible_with_allocator<T3, Alloc const&, U3> and
+           __constructible_with_allocator<T4, Alloc const&, U4>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4>))
+  tuple(allocator_arg_t, Alloc const& alloc, U0&& u0, U1&& u1, U2&& u2, U3&& u3, U4&& u4)
+  : __x0(__construct_with_allocator<T0>(alloc, std::forward<U0>(u0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::forward<U1>(u1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::forward<U2>(u2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::forward<U3>(u3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::forward<U4>(u4)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&> and
+           __constructible_with_allocator<T3, Alloc const&, U3&> and
+           __constructible_with_allocator<T4, Alloc const&, U4&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4>& t)
+  : __x0(__construct_with_allocator<T0>(alloc, t.__x0))
+  , __x1(__construct_with_allocator<T1>(alloc, t.__x1))
+  , __x2(__construct_with_allocator<T2>(alloc, t.__x2))
+  , __x3(__construct_with_allocator<T3>(alloc, t.__x3))
+  , __x4(__construct_with_allocator<T4>(alloc, t.__x4))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&> and
+           __constructible_with_allocator<T2, Alloc const&, U2 const&> and
+           __constructible_with_allocator<T3, Alloc const&, U3 const&> and
+           __constructible_with_allocator<T4, Alloc const&, U4 const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2 const&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3 const&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4 const&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4> const& t)
+  : __x0(__construct_with_allocator<T0>(alloc, t.__x0))
+  , __x1(__construct_with_allocator<T1>(alloc, t.__x1))
+  , __x2(__construct_with_allocator<T2>(alloc, t.__x2))
+  , __x3(__construct_with_allocator<T3>(alloc, t.__x3))
+  , __x4(__construct_with_allocator<T4>(alloc, t.__x4))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&&> and
+           __constructible_with_allocator<T3, Alloc const&, U3&&> and
+           __constructible_with_allocator<T4, Alloc const&, U4&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0&&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1&&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2&&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3&&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4&&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4>&& t)
+  : __x0(__construct_with_allocator<T0>(alloc, std::move(t.__x0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::move(t.__x1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::move(t.__x2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::move(t.__x3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::move(t.__x4)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2 const&&> and
+           __constructible_with_allocator<T3, Alloc const&, U3 const&&> and
+           __constructible_with_allocator<T4, Alloc const&, U4 const&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0 const&&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1 const&&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2 const&&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3 const&&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4 const&&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4> const&& t)
+  : __x0(__construct_with_allocator<T0>(alloc, std::move(t.__x0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::move(t.__x1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::move(t.__x2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::move(t.__x3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::move(t.__x4)))
+  {}
+
+  // template<class Alloc, tuple-like UTuple>
+  // constexpr explicit(see below) tuple(allocator_arg_t, const Alloc& a, UTuple&&);
+
+  tuple(tuple const&) = default;
+  tuple(tuple&&) = default;
+
+  // [tuple.assign], tuple assignment
+  constexpr tuple& operator=(tuple const&) = default;
+  constexpr tuple& operator=(tuple&&) = default;
+
+  constexpr const tuple& operator=(tuple const& other) const
+  requires std::is_copy_assignable_v<T0 const> and
+           std::is_copy_assignable_v<T1 const> and
+           std::is_copy_assignable_v<T2 const> and
+           std::is_copy_assignable_v<T3 const> and
+           std::is_copy_assignable_v<T4 const>
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    return *this;
+  }
+
+  constexpr const tuple& operator=(tuple&& other) const
+  requires std::is_assignable_v<T0 const&, T0> and
+           std::is_assignable_v<T1 const&, T1> and
+           std::is_assignable_v<T2 const&, T2> and
+           std::is_assignable_v<T3 const&, T3> and
+           std::is_assignable_v<T4 const&, T4>
+  {
+    [[clang::always_inline]] swap(std::move(other));
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4>
+  requires std::is_assignable_v<T0&, U0 const&> and
+           std::is_assignable_v<T1&, U1 const&> and
+           std::is_assignable_v<T2&, U2 const&> and
+           std::is_assignable_v<T3&, U3 const&> and
+           std::is_assignable_v<T4&, U4 const&>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4> const& other)
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4>
+  requires std::is_assignable_v<T0 const&, U0 const&> and
+           std::is_assignable_v<T1 const&, U1 const&> and
+           std::is_assignable_v<T2 const&, U2 const&> and
+           std::is_assignable_v<T3 const&, U3 const&> and
+           std::is_assignable_v<T4 const&, U4 const&>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4> const& other) const
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4>
+  requires std::is_assignable_v<T0&, U0> and
+           std::is_assignable_v<T1&, U1> and
+           std::is_assignable_v<T2&, U2> and
+           std::is_assignable_v<T3&, U3> and
+           std::is_assignable_v<T4&, U4>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4>&& other)
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    [[clang::always_inline]] __x3 = std::move(other.__x3);
+    [[clang::always_inline]] __x4 = std::move(other.__x4);
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4>
+  requires is_assignable_v<T0 const&, U0 const> and
+           is_assignable_v<T1 const&, U1 const> and
+           is_assignable_v<T2 const&, U2 const> and
+           is_assignable_v<T3 const&, U3 const> and
+           is_assignable_v<T4 const&, U4 const>
+  constexpr tuple const& operator=(tuple<U0, U1, U2, U4> const&& other) const
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    [[clang::always_inline]] __x3 = std::move(other.__x3);
+    [[clang::always_inline]] __x4 = std::move(other.__x4);
+    return *this;
+  }
+
+  // template<tuple-like UTuple>
+  // constexpr tuple& operator=(UTuple&&);
+  // template<tuple-like UTuple>
+  // constexpr const tuple& operator=(UTuple&&) const;
+
+  // [tuple.swap], tuple swap
+
+  constexpr void swap(tuple& other) noexcept(is_nothrow_swappable_v<T0> and
+                                             is_nothrow_swappable_v<T1> and
+                                             is_nothrow_swappable_v<T2> and
+                                             is_nothrow_swappable_v<T3> and
+                                             is_nothrow_swappable_v<T4>)
+  requires swappable<T0> and
+           swappable<T1> and
+           swappable<T2> and
+           swappable<T3> and
+           swappable<T4>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+    [[clang::always_inline]] std::ranges::swap(__x3, other.__x3);
+    [[clang::always_inline]] std::ranges::swap(__x4, other.__x4);
+  }
+
+  constexpr void swap(tuple const& other) const noexcept(is_nothrow_swappable_v<T0 const> and
+                                                         is_nothrow_swappable_v<T1 const> and
+                                                         is_nothrow_swappable_v<T2 const> and
+                                                         is_nothrow_swappable_v<T3 const> and
+                                                         is_nothrow_swappable_v<T4 const>)
+  requires swappable<T0 const> and
+           swappable<T1 const> and
+           swappable<T2 const> and
+           swappable<T3 const> and
+           swappable<T4 const>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+    [[clang::always_inline]] std::ranges::swap(__x3, other.__x3);
+    [[clang::always_inline]] std::ranges::swap(__x4, other.__x4);
+  }
+
+  template<equality_comparable_with<T0> U0,
+           equality_comparable_with<T1> U1,
+           equality_comparable_with<T2> U2,
+           equality_comparable_with<T3> U3,
+           equality_comparable_with<T4> U4>
+  friend constexpr bool operator==(tuple const& t, tuple<U0, U1, U2, U3, U4> const& u)
+  {
+      return t.__x0 == u.__x0 and
+             t.__x1 == u.__x1 and
+             t.__x2 == u.__x2 and
+             t.__x3 == u.__x3 and
+             t.__x4 == u.__x4;
+  }
+
+  template<__synth_three_way_comparable_with<T0> U0,
+           __synth_three_way_comparable_with<T1> U1,
+           __synth_three_way_comparable_with<T2> U2,
+           __synth_three_way_comparable_with<T3> U3,
+           __synth_three_way_comparable_with<T4> U4>
+  friend constexpr auto operator<=>(tuple const& t, tuple<U0, U1, U2, U3, U4> const& u)
+  -> common_comparison_category_t<__synth_three_way_result<T0, U0>,
+                                  __synth_three_way_result<T1, U1>,
+                                  __synth_three_way_result<T2, U2>,
+                                  __synth_three_way_result<T3, U3>,
+                                  __synth_three_way_result<T4, U4>>
+  {
+    if (auto result = __synth_three_way(t.__x0, u.__x0); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x1, u.__x1); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x2, u.__x2); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x3, u.__x3); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    return __synth_three_way(t.__x4, u.__x4);
+  }
+};
+
+template<class T0, class T1, class T2, class T3, class T4, class T5>
+class _LIBCPP_TEMPLATE_VIS tuple<T0, T1, T2, T3, T4, T5> {
+public:
+  [[no_unique_address]] T0 __x0;
+  [[no_unique_address]] T1 __x1;
+  [[no_unique_address]] T2 __x2;
+  [[no_unique_address]] T3 __x3;
+  [[no_unique_address]] T4 __x4;
+  [[no_unique_address]] T5 __x5;
+
+  constexpr explicit(not (__is_implicitly_constructible<T0> and
+                          __is_implicitly_constructible<T1> and
+                          __is_implicitly_constructible<T2> and
+                          __is_implicitly_constructible<T3> and
+                          __is_implicitly_constructible<T4> and
+                          __is_implicitly_constructible<T5>))
+  tuple()
+  requires std::is_default_constructible_v<T0> and
+           std::is_default_constructible_v<T1> and
+           std::is_default_constructible_v<T2> and
+           std::is_default_constructible_v<T3> and
+           std::is_default_constructible_v<T4> and
+           std::is_default_constructible_v<T5>
+  : __x0()
+  , __x1()
+  , __x2()
+  , __x3()
+  , __x4()
+  , __x5()
+  {}
+
+  constexpr explicit(not (is_convertible_v<T0 const&, T0> and
+                          is_convertible_v<T1 const&, T1> and
+                          is_convertible_v<T2 const&, T2> and
+                          is_convertible_v<T3 const&, T3> and
+                          is_convertible_v<T4 const&, T4> and
+                          is_convertible_v<T5 const&, T5>))
+  tuple(T0 const& t0, T1 const& t1, T2 const& t2, T3 const& t3, T4 const& t4, T5 const& t5)
+  requires std::is_copy_constructible_v<T0> and
+           std::is_copy_constructible_v<T1> and
+           std::is_copy_constructible_v<T2> and
+           std::is_copy_constructible_v<T3> and
+           std::is_copy_constructible_v<T4> and
+           std::is_copy_constructible_v<T5>
+  : __x0(t0)
+  , __x1(t1)
+  , __x2(t2)
+  , __x3(t3)
+  , __x4(t4)
+  , __x5(t5)
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5>
+  requires is_constructible_v<T0, U0> and
+           is_constructible_v<T1, U1> and
+           is_constructible_v<T2, U2> and
+           is_constructible_v<T3, U3> and
+           is_constructible_v<T4, U4> and
+           is_constructible_v<T5, U5>
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1> and
+                          is_convertible_v<U2, T2> and
+                          is_convertible_v<U3, T3> and
+                          is_convertible_v<U4, T4> and
+                          is_convertible_v<U5, T5>))
+  tuple(U0&& u0, U1&& u1, U2&& u2, U3&& u3, U4&& u4, U5&& u5)
+  : __x0(std::forward<U0>(u0))
+  , __x1(std::forward<U1>(u1))
+  , __x2(std::forward<U2>(u2))
+  , __x3(std::forward<U3>(u3))
+  , __x4(std::forward<U4>(u4))
+  , __x5(std::forward<U5>(u5))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5>
+  requires is_constructible_v<T0, U0&> and
+           is_constructible_v<T1, U1&> and
+           is_constructible_v<T2, U2&> and
+           is_constructible_v<T3, U3&> and
+           is_constructible_v<T4, U4&> and
+           is_constructible_v<T5, U5&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and
+                          is_convertible_v<U1&, T1> and
+                          is_convertible_v<U2&, T2> and
+                          is_convertible_v<U3&, T3> and
+                          is_convertible_v<U4&, T4> and
+                          is_convertible_v<U5&, T5>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5>& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  , __x3(std::forward<U3>(t.__x3))
+  , __x4(std::forward<U4>(t.__x4))
+  , __x5(std::forward<U5>(t.__x5))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5>
+  requires is_constructible_v<T0, U0 const&> and
+           is_constructible_v<T1, U1 const&> and
+           is_constructible_v<T2, U2 const&> and
+           is_constructible_v<T3, U3 const&> and
+           is_constructible_v<T4, U4 const&> and
+           is_constructible_v<T5, U5 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and
+                          is_convertible_v<U1 const&, T1> and
+                          is_convertible_v<U2 const&, T2> and
+                          is_convertible_v<U3 const&, T3> and
+                          is_convertible_v<U4 const&, T4> and
+                          is_convertible_v<U5 const&, T5>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5> const& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  , __x3(std::forward<U3 const>(t.__x3))
+  , __x4(std::forward<U4 const>(t.__x4))
+  , __x5(std::forward<U5 const>(t.__x5))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5>
+  requires is_constructible_v<T0, U0> and
+           is_constructible_v<T1, U1> and
+           is_constructible_v<T2, U2> and
+           is_constructible_v<T3, U3> and
+           is_constructible_v<T4, U4> and
+           is_constructible_v<T5, U5>
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1> and
+                          is_convertible_v<U2, T2> and
+                          is_convertible_v<U3, T3> and
+                          is_convertible_v<U4, T4> and
+                          is_convertible_v<U5, T5>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5>&& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  , __x3(std::forward<U3>(t.__x3))
+  , __x4(std::forward<U4>(t.__x4))
+  , __x5(std::forward<U5>(t.__x5))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5>
+  requires is_constructible_v<T0, U0 const> and
+           is_constructible_v<T1, U1 const> and
+           is_constructible_v<T2, U2 const> and
+           is_constructible_v<T3, U3 const> and
+           is_constructible_v<T4, U4 const> and
+           is_constructible_v<T5, U5 const>
+  constexpr explicit(not (is_convertible_v<U0 const, T0> and
+                          is_convertible_v<U1 const, T1> and
+                          is_convertible_v<U2 const, T2> and
+                          is_convertible_v<U3 const, T3> and
+                          is_convertible_v<U4 const, T4> and
+                          is_convertible_v<U5 const, T5>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5> const&& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  , __x3(std::forward<U3 const>(t.__x3))
+  , __x4(std::forward<U4 const>(t.__x4))
+  , __x5(std::forward<U5 const>(t.__x5))
+  {}
+
+  template<class Alloc>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&> and
+                          __is_implicitly_constructible<T1, Alloc const&> and
+                          __is_implicitly_constructible<T2, Alloc const&> and
+                          __is_implicitly_constructible<T3, Alloc const&> and
+                          __is_implicitly_constructible<T4, Alloc const&> and
+                          __is_implicitly_constructible<T5, Alloc const&>))
+  tuple(allocator_arg_t, Alloc const& a)
+  requires std::__constructible_with_allocator<T0, Alloc const&> and
+           std::__constructible_with_allocator<T1, Alloc const&> and
+           std::__constructible_with_allocator<T2, Alloc const&> and
+           std::__constructible_with_allocator<T3, Alloc const&> and
+           std::__constructible_with_allocator<T4, Alloc const&> and
+           std::__constructible_with_allocator<T5, Alloc const&>
+  : __x0(__construct_with_allocator<T0>(a))
+  , __x1(__construct_with_allocator<T1>(a))
+  , __x2(__construct_with_allocator<T2>(a))
+  , __x3(__construct_with_allocator<T3>(a))
+  , __x4(__construct_with_allocator<T4>(a))
+  , __x5(__construct_with_allocator<T5>(a))
+  {}
+
+  template<class Alloc>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, T2 const&> and
+                          __is_implicitly_constructible<T3, Alloc const&, T3 const&> and
+                          __is_implicitly_constructible<T4, Alloc const&, T4 const&> and
+                          __is_implicitly_constructible<T5, Alloc const&, T5 const&>))
+  tuple(allocator_arg_t, Alloc const& alloc, T0 const& t0, T1 const& t1, T2 const& t2, T3 const& t3, T4 const& t4, T5 const& t5)
+  requires std::__constructible_with_allocator<T0, Alloc const&, T0 const&> and
+           std::__constructible_with_allocator<T1, Alloc const&, T1 const&> and
+           std::__constructible_with_allocator<T2, Alloc const&, T2 const&> and
+           std::__constructible_with_allocator<T3, Alloc const&, T3 const&> and
+           std::__constructible_with_allocator<T4, Alloc const&, T4 const&> and
+           std::__constructible_with_allocator<T5, Alloc const&, T5 const&>
+  : __x0(__construct_with_allocator<T0>(alloc, t0))
+  , __x1(__construct_with_allocator<T1>(alloc, t1))
+  , __x2(__construct_with_allocator<T2>(alloc, t2))
+  , __x3(__construct_with_allocator<T3>(alloc, t3))
+  , __x4(__construct_with_allocator<T4>(alloc, t4))
+  , __x5(__construct_with_allocator<T5>(alloc, t5))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5>
+  requires __constructible_with_allocator<T0, Alloc const&, U0> and
+           __constructible_with_allocator<T1, Alloc const&, U1> and
+           __constructible_with_allocator<T2, Alloc const&, U2> and
+           __constructible_with_allocator<T3, Alloc const&, U3> and
+           __constructible_with_allocator<T4, Alloc const&, U4> and
+           __constructible_with_allocator<T5, Alloc const&, U5>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5>))
+  tuple(allocator_arg_t, Alloc const& alloc, U0&& u0, U1&& u1, U2&& u2, U3&& u3, U4&& u4, U5&& u5)
+  : __x0(__construct_with_allocator<T0>(alloc, std::forward<U0>(u0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::forward<U1>(u1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::forward<U2>(u2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::forward<U3>(u3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::forward<U4>(u4)))
+  , __x5(__construct_with_allocator<T5>(alloc, std::forward<U5>(u5)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&> and
+           __constructible_with_allocator<T3, Alloc const&, U3&> and
+           __constructible_with_allocator<T4, Alloc const&, U4&> and
+           __constructible_with_allocator<T5, Alloc const&, U5&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5>& t)
+  : __x0(__construct_with_allocator<T0>(alloc, t.__x0))
+  , __x1(__construct_with_allocator<T1>(alloc, t.__x1))
+  , __x2(__construct_with_allocator<T2>(alloc, t.__x2))
+  , __x3(__construct_with_allocator<T3>(alloc, t.__x3))
+  , __x4(__construct_with_allocator<T4>(alloc, t.__x4))
+  , __x5(__construct_with_allocator<T5>(alloc, t.__x5))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&> and
+           __constructible_with_allocator<T2, Alloc const&, U2 const&> and
+           __constructible_with_allocator<T3, Alloc const&, U3 const&> and
+           __constructible_with_allocator<T4, Alloc const&, U4 const&> and
+           __constructible_with_allocator<T5, Alloc const&, U5 const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2 const&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3 const&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4 const&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5 const&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5> const& t)
+  : __x0(__construct_with_allocator<T0>(alloc, t.__x0))
+  , __x1(__construct_with_allocator<T1>(alloc, t.__x1))
+  , __x2(__construct_with_allocator<T2>(alloc, t.__x2))
+  , __x3(__construct_with_allocator<T3>(alloc, t.__x3))
+  , __x4(__construct_with_allocator<T4>(alloc, t.__x4))
+  , __x5(__construct_with_allocator<T5>(alloc, t.__x5))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&&> and
+           __constructible_with_allocator<T3, Alloc const&, U3&&> and
+           __constructible_with_allocator<T4, Alloc const&, U4&&> and
+           __constructible_with_allocator<T5, Alloc const&, U5&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0&&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1&&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2&&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3&&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4&&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5&&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5>&& t)
+  : __x0(__construct_with_allocator<T0>(alloc, std::move(t.__x0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::move(t.__x1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::move(t.__x2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::move(t.__x3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::move(t.__x4)))
+  , __x5(__construct_with_allocator<T5>(alloc, std::move(t.__x5)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2 const&&> and
+           __constructible_with_allocator<T3, Alloc const&, U3 const&&> and
+           __constructible_with_allocator<T4, Alloc const&, U4 const&&> and
+           __constructible_with_allocator<T5, Alloc const&, U5 const&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0 const&&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1 const&&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2 const&&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3 const&&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4 const&&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5 const&&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5> const&& t)
+  : __x0(__construct_with_allocator<T0>(alloc, std::move(t.__x0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::move(t.__x1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::move(t.__x2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::move(t.__x3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::move(t.__x4)))
+  , __x5(__construct_with_allocator<T5>(alloc, std::move(t.__x5)))
+  {}
+
+  // template<class Alloc, tuple-like UTuple>
+  // constexpr explicit(see below) tuple(allocator_arg_t, const Alloc& a, UTuple&&);
+
+  tuple(tuple const&) = default;
+  tuple(tuple&&) = default;
+
+  // [tuple.assign], tuple assignment
+  constexpr tuple& operator=(tuple const&) = default;
+  constexpr tuple& operator=(tuple&&) = default;
+
+  constexpr const tuple& operator=(tuple const& other) const
+  requires std::is_copy_assignable_v<T0 const> and
+           std::is_copy_assignable_v<T1 const> and
+           std::is_copy_assignable_v<T2 const> and
+           std::is_copy_assignable_v<T3 const> and
+           std::is_copy_assignable_v<T4 const> and
+           std::is_copy_assignable_v<T5 const>
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    [[clang::always_inline]] __x5 = other.__x5;
+    return *this;
+  }
+
+  constexpr const tuple& operator=(tuple&& other) const
+  requires std::is_assignable_v<T0 const&, T0> and
+           std::is_assignable_v<T1 const&, T1> and
+           std::is_assignable_v<T2 const&, T2> and
+           std::is_assignable_v<T3 const&, T3> and
+           std::is_assignable_v<T4 const&, T4> and
+           std::is_assignable_v<T5 const&, T5>
+  {
+    [[clang::always_inline]] swap(std::move(other));
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5>
+  requires std::is_assignable_v<T0&, U0 const&> and
+           std::is_assignable_v<T1&, U1 const&> and
+           std::is_assignable_v<T2&, U2 const&> and
+           std::is_assignable_v<T3&, U3 const&> and
+           std::is_assignable_v<T4&, U4 const&> and
+           std::is_assignable_v<T5&, U5 const&>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4, U5> const& other)
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    [[clang::always_inline]] __x5 = other.__x5;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5>
+  requires std::is_assignable_v<T0 const&, U0 const&> and
+           std::is_assignable_v<T1 const&, U1 const&> and
+           std::is_assignable_v<T2 const&, U2 const&> and
+           std::is_assignable_v<T3 const&, U3 const&> and
+           std::is_assignable_v<T4 const&, U4 const&> and
+           std::is_assignable_v<T5 const&, U5 const&>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4, U5> const& other) const
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    [[clang::always_inline]] __x5 = other.__x5;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5>
+  requires std::is_assignable_v<T0&, U0> and
+           std::is_assignable_v<T1&, U1> and
+           std::is_assignable_v<T2&, U2> and
+           std::is_assignable_v<T3&, U3> and
+           std::is_assignable_v<T4&, U4> and
+           std::is_assignable_v<T5&, U5>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4, U5>&& other)
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    [[clang::always_inline]] __x3 = std::move(other.__x3);
+    [[clang::always_inline]] __x4 = std::move(other.__x4);
+    [[clang::always_inline]] __x5 = std::move(other.__x5);
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5>
+  requires is_assignable_v<T0 const&, U0 const> and
+           is_assignable_v<T1 const&, U1 const> and
+           is_assignable_v<T2 const&, U2 const> and
+           is_assignable_v<T3 const&, U3 const> and
+           is_assignable_v<T4 const&, U4 const> and
+           is_assignable_v<T5 const&, U5 const>
+  constexpr tuple const& operator=(tuple<U0, U1, U2, U4, U5> const&& other) const
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    [[clang::always_inline]] __x3 = std::move(other.__x3);
+    [[clang::always_inline]] __x4 = std::move(other.__x4);
+    [[clang::always_inline]] __x5 = std::move(other.__x5);
+    return *this;
+  }
+
+  // template<tuple-like UTuple>
+  // constexpr tuple& operator=(UTuple&&);
+  // template<tuple-like UTuple>
+  // constexpr const tuple& operator=(UTuple&&) const;
+
+  // [tuple.swap], tuple swap
+
+  constexpr void swap(tuple& other) noexcept(is_nothrow_swappable_v<T0> and
+                                             is_nothrow_swappable_v<T1> and
+                                             is_nothrow_swappable_v<T2> and
+                                             is_nothrow_swappable_v<T3> and
+                                             is_nothrow_swappable_v<T4> and
+                                             is_nothrow_swappable_v<T5>)
+  requires swappable<T0> and
+           swappable<T1> and
+           swappable<T2> and
+           swappable<T3> and
+           swappable<T4> and
+           swappable<T5>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+    [[clang::always_inline]] std::ranges::swap(__x3, other.__x3);
+    [[clang::always_inline]] std::ranges::swap(__x4, other.__x4);
+    [[clang::always_inline]] std::ranges::swap(__x5, other.__x5);
+  }
+
+  constexpr void swap(tuple const& other) const noexcept(is_nothrow_swappable_v<T0 const> and
+                                                         is_nothrow_swappable_v<T1 const> and
+                                                         is_nothrow_swappable_v<T2 const> and
+                                                         is_nothrow_swappable_v<T3 const> and
+                                                         is_nothrow_swappable_v<T4 const> and
+                                                         is_nothrow_swappable_v<T5 const>)
+  requires swappable<T0 const> and
+           swappable<T1 const> and
+           swappable<T2 const> and
+           swappable<T3 const> and
+           swappable<T4 const> and
+           swappable<T5 const>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+    [[clang::always_inline]] std::ranges::swap(__x3, other.__x3);
+    [[clang::always_inline]] std::ranges::swap(__x4, other.__x4);
+    [[clang::always_inline]] std::ranges::swap(__x5, other.__x5);
+  }
+
+  template<equality_comparable_with<T0> U0,
+           equality_comparable_with<T1> U1,
+           equality_comparable_with<T2> U2,
+           equality_comparable_with<T3> U3,
+           equality_comparable_with<T4> U4,
+           equality_comparable_with<T5> U5>
+  friend constexpr bool operator==(tuple const& t, tuple<U0, U1, U2, U3, U4, U5> const& u)
+  {
+      return t.__x0 == u.__x0 and
+             t.__x1 == u.__x1 and
+             t.__x2 == u.__x2 and
+             t.__x3 == u.__x3 and
+             t.__x4 == u.__x4 and
+             t.__x5 == u.__x5;
+  }
+
+  template<__synth_three_way_comparable_with<T0> U0,
+           __synth_three_way_comparable_with<T1> U1,
+           __synth_three_way_comparable_with<T2> U2,
+           __synth_three_way_comparable_with<T3> U3,
+           __synth_three_way_comparable_with<T4> U4,
+           __synth_three_way_comparable_with<T5> U5>
+  friend constexpr auto operator<=>(tuple const& t, tuple<U0, U1, U2, U3, U4, U5> const& u)
+  -> common_comparison_category_t<__synth_three_way_result<T0, U0>,
+                                  __synth_three_way_result<T1, U1>,
+                                  __synth_three_way_result<T2, U2>,
+                                  __synth_three_way_result<T3, U3>,
+                                  __synth_three_way_result<T4, U4>,
+                                  __synth_three_way_result<T5, U5>>
+  {
+    if (auto result = __synth_three_way(t.__x0, u.__x0); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x1, u.__x1); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x2, u.__x2); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x3, u.__x3); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x4, u.__x4); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    return __synth_three_way(t.__x5, u.__x5);
+  }
+};
+
+template<class T0, class T1, class T2, class T3, class T4, class T5, class T6>
+class _LIBCPP_TEMPLATE_VIS tuple<T0, T1, T2, T3, T4, T5, T6> {
+public:
+  [[no_unique_address]] T0 __x0;
+  [[no_unique_address]] T1 __x1;
+  [[no_unique_address]] T2 __x2;
+  [[no_unique_address]] T3 __x3;
+  [[no_unique_address]] T4 __x4;
+  [[no_unique_address]] T5 __x5;
+  [[no_unique_address]] T6 __x6;
+
+  constexpr explicit(not (__is_implicitly_constructible<T0> and
+                          __is_implicitly_constructible<T1> and
+                          __is_implicitly_constructible<T2> and
+                          __is_implicitly_constructible<T3> and
+                          __is_implicitly_constructible<T4> and
+                          __is_implicitly_constructible<T5> and
+                          __is_implicitly_constructible<T6>))
+  tuple()
+  requires std::is_default_constructible_v<T0> and
+           std::is_default_constructible_v<T1> and
+           std::is_default_constructible_v<T2> and
+           std::is_default_constructible_v<T3> and
+           std::is_default_constructible_v<T4> and
+           std::is_default_constructible_v<T5> and
+           std::is_default_constructible_v<T6>
+  : __x0()
+  , __x1()
+  , __x2()
+  , __x3()
+  , __x4()
+  , __x5()
+  , __x6()
+  {}
+
+  constexpr explicit(not (is_convertible_v<T0 const&, T0> and
+                          is_convertible_v<T1 const&, T1> and
+                          is_convertible_v<T2 const&, T2> and
+                          is_convertible_v<T3 const&, T3> and
+                          is_convertible_v<T4 const&, T4> and
+                          is_convertible_v<T5 const&, T5> and
+                          is_convertible_v<T6 const&, T6>))
+  tuple(T0 const& t0, T1 const& t1, T2 const& t2, T3 const& t3, T4 const& t4, T5 const& t5, T6 const& t6)
+  requires std::is_copy_constructible_v<T0> and
+           std::is_copy_constructible_v<T1> and
+           std::is_copy_constructible_v<T2> and
+           std::is_copy_constructible_v<T3> and
+           std::is_copy_constructible_v<T4> and
+           std::is_copy_constructible_v<T5> and
+           std::is_copy_constructible_v<T6>
+  : __x0(t0)
+  , __x1(t1)
+  , __x2(t2)
+  , __x3(t3)
+  , __x4(t4)
+  , __x5(t5)
+  , __x6(t6)
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires is_constructible_v<T0, U0> and
+           is_constructible_v<T1, U1> and
+           is_constructible_v<T2, U2> and
+           is_constructible_v<T3, U3> and
+           is_constructible_v<T4, U4> and
+           is_constructible_v<T5, U5> and
+           is_constructible_v<T6, U6>
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1> and
+                          is_convertible_v<U2, T2> and
+                          is_convertible_v<U3, T3> and
+                          is_convertible_v<U4, T4> and
+                          is_convertible_v<U5, T5> and
+                          is_convertible_v<U6, T6>))
+  tuple(U0&& u0, U1&& u1, U2&& u2, U3&& u3, U4&& u4, U5&& u5, U6&& u6)
+  : __x0(std::forward<U0>(u0))
+  , __x1(std::forward<U1>(u1))
+  , __x2(std::forward<U2>(u2))
+  , __x3(std::forward<U3>(u3))
+  , __x4(std::forward<U4>(u4))
+  , __x5(std::forward<U5>(u5))
+  , __x6(std::forward<U6>(u6))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires is_constructible_v<T0, U0&> and
+           is_constructible_v<T1, U1&> and
+           is_constructible_v<T2, U2&> and
+           is_constructible_v<T3, U3&> and
+           is_constructible_v<T4, U4&> and
+           is_constructible_v<T5, U5&> and
+           is_constructible_v<T6, U6&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and
+                          is_convertible_v<U1&, T1> and
+                          is_convertible_v<U2&, T2> and
+                          is_convertible_v<U3&, T3> and
+                          is_convertible_v<U4&, T4> and
+                          is_convertible_v<U5&, T5> and
+                          is_convertible_v<U6&, T6>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5, U6>& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  , __x3(std::forward<U3>(t.__x3))
+  , __x4(std::forward<U4>(t.__x4))
+  , __x5(std::forward<U5>(t.__x5))
+  , __x6(std::forward<U6>(t.__x6))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires is_constructible_v<T0, U0 const&> and
+           is_constructible_v<T1, U1 const&> and
+           is_constructible_v<T2, U2 const&> and
+           is_constructible_v<T3, U3 const&> and
+           is_constructible_v<T4, U4 const&> and
+           is_constructible_v<T5, U5 const&> and
+           is_constructible_v<T6, U6 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and
+                          is_convertible_v<U1 const&, T1> and
+                          is_convertible_v<U2 const&, T2> and
+                          is_convertible_v<U3 const&, T3> and
+                          is_convertible_v<U4 const&, T4> and
+                          is_convertible_v<U5 const&, T5> and
+                          is_convertible_v<U6 const&, T6>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5, U6> const& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  , __x3(std::forward<U3 const>(t.__x3))
+  , __x4(std::forward<U4 const>(t.__x4))
+  , __x5(std::forward<U5 const>(t.__x5))
+  , __x6(std::forward<U6 const>(t.__x6))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires is_constructible_v<T0, U0> and
+           is_constructible_v<T1, U1> and
+           is_constructible_v<T2, U2> and
+           is_constructible_v<T3, U3> and
+           is_constructible_v<T4, U4> and
+           is_constructible_v<T5, U5> and
+           is_constructible_v<T6, U6>
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1> and
+                          is_convertible_v<U2, T2> and
+                          is_convertible_v<U3, T3> and
+                          is_convertible_v<U4, T4> and
+                          is_convertible_v<U5, T5> and
+                          is_convertible_v<U6, T6>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5, U6>&& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  , __x3(std::forward<U3>(t.__x3))
+  , __x4(std::forward<U4>(t.__x4))
+  , __x5(std::forward<U5>(t.__x5))
+  , __x6(std::forward<U6>(t.__x6))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires is_constructible_v<T0, U0 const> and
+           is_constructible_v<T1, U1 const> and
+           is_constructible_v<T2, U2 const> and
+           is_constructible_v<T3, U3 const> and
+           is_constructible_v<T4, U4 const> and
+           is_constructible_v<T5, U5 const> and
+           is_constructible_v<T6, U6 const>
+  constexpr explicit(not (is_convertible_v<U0 const, T0> and
+                          is_convertible_v<U1 const, T1> and
+                          is_convertible_v<U2 const, T2> and
+                          is_convertible_v<U3 const, T3> and
+                          is_convertible_v<U4 const, T4> and
+                          is_convertible_v<U5 const, T5> and
+                          is_convertible_v<U6 const, T6>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5, U6> const&& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  , __x3(std::forward<U3 const>(t.__x3))
+  , __x4(std::forward<U4 const>(t.__x4))
+  , __x5(std::forward<U5 const>(t.__x5))
+  , __x6(std::forward<U6 const>(t.__x6))
+  {}
+
+  template<class Alloc>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&> and
+                          __is_implicitly_constructible<T1, Alloc const&> and
+                          __is_implicitly_constructible<T2, Alloc const&> and
+                          __is_implicitly_constructible<T3, Alloc const&> and
+                          __is_implicitly_constructible<T4, Alloc const&> and
+                          __is_implicitly_constructible<T5, Alloc const&> and
+                          __is_implicitly_constructible<T6, Alloc const&>))
+  tuple(allocator_arg_t, Alloc const& a)
+  requires std::__constructible_with_allocator<T0, Alloc const&> and
+           std::__constructible_with_allocator<T1, Alloc const&> and
+           std::__constructible_with_allocator<T2, Alloc const&> and
+           std::__constructible_with_allocator<T3, Alloc const&> and
+           std::__constructible_with_allocator<T4, Alloc const&> and
+           std::__constructible_with_allocator<T5, Alloc const&> and
+           std::__constructible_with_allocator<T6, Alloc const&>
+  : __x0(__construct_with_allocator<T0>(a))
+  , __x1(__construct_with_allocator<T1>(a))
+  , __x2(__construct_with_allocator<T2>(a))
+  , __x3(__construct_with_allocator<T3>(a))
+  , __x4(__construct_with_allocator<T4>(a))
+  , __x5(__construct_with_allocator<T5>(a))
+  , __x6(__construct_with_allocator<T6>(a))
+  {}
+
+  template<class Alloc>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, T2 const&> and
+                          __is_implicitly_constructible<T3, Alloc const&, T3 const&> and
+                          __is_implicitly_constructible<T4, Alloc const&, T4 const&> and
+                          __is_implicitly_constructible<T5, Alloc const&, T5 const&> and
+                          __is_implicitly_constructible<T6, Alloc const&, T6 const&>))
+  tuple(allocator_arg_t, Alloc const& alloc, T0 const& t0, T1 const& t1, T2 const& t2, T3 const& t3, T4 const& t4, T5 const& t5, T6 const& t6)
+  requires std::__constructible_with_allocator<T0, Alloc const&, T0 const&> and
+           std::__constructible_with_allocator<T1, Alloc const&, T1 const&> and
+           std::__constructible_with_allocator<T2, Alloc const&, T2 const&> and
+           std::__constructible_with_allocator<T3, Alloc const&, T3 const&> and
+           std::__constructible_with_allocator<T4, Alloc const&, T4 const&> and
+           std::__constructible_with_allocator<T5, Alloc const&, T5 const&> and
+           std::__constructible_with_allocator<T6, Alloc const&, T6 const&>
+  : __x0(__construct_with_allocator<T0>(alloc, t0))
+  , __x1(__construct_with_allocator<T1>(alloc, t1))
+  , __x2(__construct_with_allocator<T2>(alloc, t2))
+  , __x3(__construct_with_allocator<T3>(alloc, t3))
+  , __x4(__construct_with_allocator<T4>(alloc, t4))
+  , __x5(__construct_with_allocator<T5>(alloc, t5))
+  , __x6(__construct_with_allocator<T6>(alloc, t6))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires __constructible_with_allocator<T0, Alloc const&, U0> and
+           __constructible_with_allocator<T1, Alloc const&, U1> and
+           __constructible_with_allocator<T2, Alloc const&, U2> and
+           __constructible_with_allocator<T3, Alloc const&, U3> and
+           __constructible_with_allocator<T4, Alloc const&, U4> and
+           __constructible_with_allocator<T5, Alloc const&, U5> and
+           __constructible_with_allocator<T6, Alloc const&, U6>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5> and
+                          __is_implicitly_constructible<T6, Alloc const&, U6>))
+  tuple(allocator_arg_t, Alloc const& alloc, U0&& u0, U1&& u1, U2&& u2, U3&& u3, U4&& u4, U5&& u5, U6&& u6)
+  : __x0(__construct_with_allocator<T0>(alloc, std::forward<U0>(u0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::forward<U1>(u1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::forward<U2>(u2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::forward<U3>(u3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::forward<U4>(u4)))
+  , __x5(__construct_with_allocator<T5>(alloc, std::forward<U5>(u5)))
+  , __x6(__construct_with_allocator<T6>(alloc, std::forward<U6>(u6)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&> and
+           __constructible_with_allocator<T3, Alloc const&, U3&> and
+           __constructible_with_allocator<T4, Alloc const&, U4&> and
+           __constructible_with_allocator<T5, Alloc const&, U5&> and
+           __constructible_with_allocator<T6, Alloc const&, U6&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U6&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5, U6>& t)
+  : __x0(__construct_with_allocator<T0>(alloc, t.__x0))
+  , __x1(__construct_with_allocator<T1>(alloc, t.__x1))
+  , __x2(__construct_with_allocator<T2>(alloc, t.__x2))
+  , __x3(__construct_with_allocator<T3>(alloc, t.__x3))
+  , __x4(__construct_with_allocator<T4>(alloc, t.__x4))
+  , __x5(__construct_with_allocator<T5>(alloc, t.__x5))
+  , __x6(__construct_with_allocator<T6>(alloc, t.__x6))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&> and
+           __constructible_with_allocator<T2, Alloc const&, U2 const&> and
+           __constructible_with_allocator<T3, Alloc const&, U3 const&> and
+           __constructible_with_allocator<T4, Alloc const&, U4 const&> and
+           __constructible_with_allocator<T5, Alloc const&, U5 const&> and
+           __constructible_with_allocator<T6, Alloc const&, U6 const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2 const&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3 const&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4 const&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5 const&> and
+                          __is_implicitly_constructible<T6, Alloc const&, U6 const&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5, U6> const& t)
+  : __x0(__construct_with_allocator<T0>(alloc, t.__x0))
+  , __x1(__construct_with_allocator<T1>(alloc, t.__x1))
+  , __x2(__construct_with_allocator<T2>(alloc, t.__x2))
+  , __x3(__construct_with_allocator<T3>(alloc, t.__x3))
+  , __x4(__construct_with_allocator<T4>(alloc, t.__x4))
+  , __x5(__construct_with_allocator<T5>(alloc, t.__x5))
+  , __x6(__construct_with_allocator<T6>(alloc, t.__x6))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&&> and
+           __constructible_with_allocator<T3, Alloc const&, U3&&> and
+           __constructible_with_allocator<T4, Alloc const&, U4&&> and
+           __constructible_with_allocator<T5, Alloc const&, U5&&> and
+           __constructible_with_allocator<T6, Alloc const&, U6&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0&&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1&&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2&&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3&&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4&&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5&&> and
+                          __is_implicitly_constructible<T6, Alloc const&, U6&&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5, U6>&& t)
+  : __x0(__construct_with_allocator<T0>(alloc, std::move(t.__x0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::move(t.__x1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::move(t.__x2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::move(t.__x3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::move(t.__x4)))
+  , __x5(__construct_with_allocator<T5>(alloc, std::move(t.__x5)))
+  , __x6(__construct_with_allocator<T6>(alloc, std::move(t.__x6)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2 const&&> and
+           __constructible_with_allocator<T3, Alloc const&, U3 const&&> and
+           __constructible_with_allocator<T4, Alloc const&, U4 const&&> and
+           __constructible_with_allocator<T5, Alloc const&, U5 const&&> and
+           __constructible_with_allocator<T6, Alloc const&, U6 const&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0 const&&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1 const&&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2 const&&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3 const&&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4 const&&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5 const&&> and
+                          __is_implicitly_constructible<T6, Alloc const&, U6 const&&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5, U6> const&& t)
+  : __x0(__construct_with_allocator<T0>(alloc, std::move(t.__x0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::move(t.__x1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::move(t.__x2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::move(t.__x3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::move(t.__x4)))
+  , __x5(__construct_with_allocator<T5>(alloc, std::move(t.__x5)))
+  , __x6(__construct_with_allocator<T6>(alloc, std::move(t.__x6)))
+  {}
+
+  // template<class Alloc, tuple-like UTuple>
+  // constexpr explicit(see below) tuple(allocator_arg_t, const Alloc& a, UTuple&&);
+
+  tuple(tuple const&) = default;
+  tuple(tuple&&) = default;
+
+  // [tuple.assign], tuple assignment
+  constexpr tuple& operator=(tuple const&) = default;
+  constexpr tuple& operator=(tuple&&) = default;
+
+  constexpr const tuple& operator=(tuple const& other) const
+  requires std::is_copy_assignable_v<T0 const> and
+           std::is_copy_assignable_v<T1 const> and
+           std::is_copy_assignable_v<T2 const> and
+           std::is_copy_assignable_v<T3 const> and
+           std::is_copy_assignable_v<T4 const> and
+           std::is_copy_assignable_v<T5 const> and
+           std::is_copy_assignable_v<T6 const>
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    [[clang::always_inline]] __x5 = other.__x5;
+    [[clang::always_inline]] __x6 = other.__x6;
+    return *this;
+  }
+
+  constexpr const tuple& operator=(tuple&& other) const
+  requires std::is_assignable_v<T0 const&, T0> and
+           std::is_assignable_v<T1 const&, T1> and
+           std::is_assignable_v<T2 const&, T2> and
+           std::is_assignable_v<T3 const&, T3> and
+           std::is_assignable_v<T4 const&, T4> and
+           std::is_assignable_v<T5 const&, T5> and
+           std::is_assignable_v<T6 const&, T6>
+  {
+    [[clang::always_inline]] swap(std::move(other));
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires std::is_assignable_v<T0&, U0 const&> and
+           std::is_assignable_v<T1&, U1 const&> and
+           std::is_assignable_v<T2&, U2 const&> and
+           std::is_assignable_v<T3&, U3 const&> and
+           std::is_assignable_v<T4&, U4 const&> and
+           std::is_assignable_v<T5&, U5 const&> and
+           std::is_assignable_v<T6&, U6 const&>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4, U5, U6> const& other)
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    [[clang::always_inline]] __x5 = other.__x5;
+    [[clang::always_inline]] __x6 = other.__x6;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires std::is_assignable_v<T0 const&, U0 const&> and
+           std::is_assignable_v<T1 const&, U1 const&> and
+           std::is_assignable_v<T2 const&, U2 const&> and
+           std::is_assignable_v<T3 const&, U3 const&> and
+           std::is_assignable_v<T4 const&, U4 const&> and
+           std::is_assignable_v<T5 const&, U5 const&> and
+           std::is_assignable_v<T6 const&, U6 const&>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4, U5, U6> const& other) const
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    [[clang::always_inline]] __x5 = other.__x5;
+    [[clang::always_inline]] __x6 = other.__x6;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires std::is_assignable_v<T0&, U0> and
+           std::is_assignable_v<T1&, U1> and
+           std::is_assignable_v<T2&, U2> and
+           std::is_assignable_v<T3&, U3> and
+           std::is_assignable_v<T4&, U4> and
+           std::is_assignable_v<T5&, U5> and
+           std::is_assignable_v<T6&, U6>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4, U5, U6>&& other)
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    [[clang::always_inline]] __x3 = std::move(other.__x3);
+    [[clang::always_inline]] __x4 = std::move(other.__x4);
+    [[clang::always_inline]] __x5 = std::move(other.__x5);
+    [[clang::always_inline]] __x6 = std::move(other.__x6);
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6>
+  requires is_assignable_v<T0 const&, U0 const> and
+           is_assignable_v<T1 const&, U1 const> and
+           is_assignable_v<T2 const&, U2 const> and
+           is_assignable_v<T3 const&, U3 const> and
+           is_assignable_v<T4 const&, U4 const> and
+           is_assignable_v<T5 const&, U5 const> and
+           is_assignable_v<T6 const&, U6 const>
+  constexpr tuple const& operator=(tuple<U0, U1, U2, U4, U5, U6> const&& other) const
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    [[clang::always_inline]] __x3 = std::move(other.__x3);
+    [[clang::always_inline]] __x4 = std::move(other.__x4);
+    [[clang::always_inline]] __x5 = std::move(other.__x5);
+    [[clang::always_inline]] __x6 = std::move(other.__x6);
+    return *this;
+  }
+
+  // template<tuple-like UTuple>
+  // constexpr tuple& operator=(UTuple&&);
+  // template<tuple-like UTuple>
+  // constexpr const tuple& operator=(UTuple&&) const;
+
+  // [tuple.swap], tuple swap
+
+  constexpr void swap(tuple& other) noexcept(is_nothrow_swappable_v<T0> and
+                                             is_nothrow_swappable_v<T1> and
+                                             is_nothrow_swappable_v<T2> and
+                                             is_nothrow_swappable_v<T3> and
+                                             is_nothrow_swappable_v<T4> and
+                                             is_nothrow_swappable_v<T5> and
+                                             is_nothrow_swappable_v<T6>)
+  requires swappable<T0> and
+           swappable<T1> and
+           swappable<T2> and
+           swappable<T3> and
+           swappable<T4> and
+           swappable<T5> and
+           swappable<T6>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+    [[clang::always_inline]] std::ranges::swap(__x3, other.__x3);
+    [[clang::always_inline]] std::ranges::swap(__x4, other.__x4);
+    [[clang::always_inline]] std::ranges::swap(__x5, other.__x5);
+    [[clang::always_inline]] std::ranges::swap(__x6, other.__x6);
+  }
+
+  constexpr void swap(tuple const& other) const noexcept(is_nothrow_swappable_v<T0 const> and
+                                                         is_nothrow_swappable_v<T1 const> and
+                                                         is_nothrow_swappable_v<T2 const> and
+                                                         is_nothrow_swappable_v<T3 const> and
+                                                         is_nothrow_swappable_v<T4 const> and
+                                                         is_nothrow_swappable_v<T5 const> and
+                                                         is_nothrow_swappable_v<T6 const>)
+  requires swappable<T0 const> and
+           swappable<T1 const> and
+           swappable<T2 const> and
+           swappable<T3 const> and
+           swappable<T4 const> and
+           swappable<T5 const> and
+           swappable<T6 const>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+    [[clang::always_inline]] std::ranges::swap(__x3, other.__x3);
+    [[clang::always_inline]] std::ranges::swap(__x4, other.__x4);
+    [[clang::always_inline]] std::ranges::swap(__x5, other.__x5);
+    [[clang::always_inline]] std::ranges::swap(__x6, other.__x6);
+  }
+
+  template<equality_comparable_with<T0> U0,
+           equality_comparable_with<T1> U1,
+           equality_comparable_with<T2> U2,
+           equality_comparable_with<T3> U3,
+           equality_comparable_with<T4> U4,
+           equality_comparable_with<T5> U5,
+           equality_comparable_with<T6> U6>
+  friend constexpr bool operator==(tuple const& t, tuple<U0, U1, U2, U3, U4, U5, U6> const& u)
+  {
+      return t.__x0 == u.__x0 and
+             t.__x1 == u.__x1 and
+             t.__x2 == u.__x2 and
+             t.__x3 == u.__x3 and
+             t.__x4 == u.__x4 and
+             t.__x5 == u.__x5 and
+             t.__x6 == u.__x6;
+  }
+
+  template<__synth_three_way_comparable_with<T0> U0,
+           __synth_three_way_comparable_with<T1> U1,
+           __synth_three_way_comparable_with<T2> U2,
+           __synth_three_way_comparable_with<T3> U3,
+           __synth_three_way_comparable_with<T4> U4,
+           __synth_three_way_comparable_with<T5> U5,
+           __synth_three_way_comparable_with<T6> U6>
+  friend constexpr auto operator<=>(tuple const& t, tuple<U0, U1, U2, U3, U4, U5, U6> const& u)
+  -> common_comparison_category_t<__synth_three_way_result<T0, U0>,
+                                  __synth_three_way_result<T1, U1>,
+                                  __synth_three_way_result<T2, U2>,
+                                  __synth_three_way_result<T3, U3>,
+                                  __synth_three_way_result<T4, U4>,
+                                  __synth_three_way_result<T5, U5>,
+                                  __synth_three_way_result<T6, U6>>
+  {
+    if (auto result = __synth_three_way(t.__x0, u.__x0); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x1, u.__x1); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x2, u.__x2); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x3, u.__x3); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x4, u.__x4); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x5, u.__x5); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    return __synth_three_way(t.__x6, u.__x6);
+  }
+};
+
+template<class T0, class T1, class T2, class T3, class T4, class T5, class T6, class T7>
+class _LIBCPP_TEMPLATE_VIS tuple<T0, T1, T2, T3, T4, T5, T6, T7> {
+public:
+  [[no_unique_address]] T0 __x0;
+  [[no_unique_address]] T1 __x1;
+  [[no_unique_address]] T2 __x2;
+  [[no_unique_address]] T3 __x3;
+  [[no_unique_address]] T4 __x4;
+  [[no_unique_address]] T5 __x5;
+  [[no_unique_address]] T6 __x6;
+  [[no_unique_address]] T7 __x7;
+
+  constexpr explicit(not (__is_implicitly_constructible<T0> and
+                          __is_implicitly_constructible<T1> and
+                          __is_implicitly_constructible<T2> and
+                          __is_implicitly_constructible<T3> and
+                          __is_implicitly_constructible<T4> and
+                          __is_implicitly_constructible<T5> and
+                          __is_implicitly_constructible<T6> and
+                          __is_implicitly_constructible<T7>))
+  tuple()
+  requires std::is_default_constructible_v<T0> and
+           std::is_default_constructible_v<T1> and
+           std::is_default_constructible_v<T2> and
+           std::is_default_constructible_v<T3> and
+           std::is_default_constructible_v<T4> and
+           std::is_default_constructible_v<T5> and
+           std::is_default_constructible_v<T6> and
+           std::is_default_constructible_v<T7>
+  : __x0()
+  , __x1()
+  , __x2()
+  , __x3()
+  , __x4()
+  , __x5()
+  , __x6()
+  , __x7()
+  {}
+
+  constexpr explicit(not (is_convertible_v<T0 const&, T0> and
+                          is_convertible_v<T1 const&, T1> and
+                          is_convertible_v<T2 const&, T2> and
+                          is_convertible_v<T3 const&, T3> and
+                          is_convertible_v<T4 const&, T4> and
+                          is_convertible_v<T5 const&, T5> and
+                          is_convertible_v<T6 const&, T6> and
+                          is_convertible_v<T7 const&, T7>))
+  tuple(T0 const& t0, T1 const& t1, T2 const& t2, T3 const& t3, T4 const& t4, T5 const& t5, T6 const& t6, T7 const& t7)
+  requires std::is_copy_constructible_v<T0> and
+           std::is_copy_constructible_v<T1> and
+           std::is_copy_constructible_v<T2> and
+           std::is_copy_constructible_v<T3> and
+           std::is_copy_constructible_v<T4> and
+           std::is_copy_constructible_v<T5> and
+           std::is_copy_constructible_v<T6> and
+           std::is_copy_constructible_v<T7>
+  : __x0(t0)
+  , __x1(t1)
+  , __x2(t2)
+  , __x3(t3)
+  , __x4(t4)
+  , __x5(t5)
+  , __x6(t6)
+  , __x7(t7)
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires is_constructible_v<T0, U0> and
+           is_constructible_v<T1, U1> and
+           is_constructible_v<T2, U2> and
+           is_constructible_v<T3, U3> and
+           is_constructible_v<T4, U4> and
+           is_constructible_v<T5, U5> and
+           is_constructible_v<T6, U6> and
+           is_constructible_v<T7, U7>
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1> and
+                          is_convertible_v<U2, T2> and
+                          is_convertible_v<U3, T3> and
+                          is_convertible_v<U4, T4> and
+                          is_convertible_v<U5, T5> and
+                          is_convertible_v<U6, T6> and
+                          is_convertible_v<U7, T7>))
+  tuple(U0&& u0, U1&& u1, U2&& u2, U3&& u3, U4&& u4, U5&& u5, U6&& u6, U7&& u7)
+  : __x0(std::forward<U0>(u0))
+  , __x1(std::forward<U1>(u1))
+  , __x2(std::forward<U2>(u2))
+  , __x3(std::forward<U3>(u3))
+  , __x4(std::forward<U4>(u4))
+  , __x5(std::forward<U5>(u5))
+  , __x6(std::forward<U6>(u6))
+  , __x7(std::forward<U7>(u7))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires is_constructible_v<T0, U0&> and
+           is_constructible_v<T1, U1&> and
+           is_constructible_v<T2, U2&> and
+           is_constructible_v<T3, U3&> and
+           is_constructible_v<T4, U4&> and
+           is_constructible_v<T5, U5&> and
+           is_constructible_v<T6, U6&> and
+           is_constructible_v<T7, U7&>
+  constexpr explicit(not (is_convertible_v<U0&, T0> and
+                          is_convertible_v<U1&, T1> and
+                          is_convertible_v<U2&, T2> and
+                          is_convertible_v<U3&, T3> and
+                          is_convertible_v<U4&, T4> and
+                          is_convertible_v<U5&, T5> and
+                          is_convertible_v<U6&, T6> and
+                          is_convertible_v<U7&, T7>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5, U6, U7>& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  , __x3(std::forward<U3>(t.__x3))
+  , __x4(std::forward<U4>(t.__x4))
+  , __x5(std::forward<U5>(t.__x5))
+  , __x6(std::forward<U6>(t.__x6))
+  , __x7(std::forward<U7>(t.__x7))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires is_constructible_v<T0, U0 const&> and
+           is_constructible_v<T1, U1 const&> and
+           is_constructible_v<T2, U2 const&> and
+           is_constructible_v<T3, U3 const&> and
+           is_constructible_v<T4, U4 const&> and
+           is_constructible_v<T5, U5 const&> and
+           is_constructible_v<T6, U6 const&> and
+           is_constructible_v<T7, U7 const&>
+  constexpr explicit(not (is_convertible_v<U0 const&, T0> and
+                          is_convertible_v<U1 const&, T1> and
+                          is_convertible_v<U2 const&, T2> and
+                          is_convertible_v<U3 const&, T3> and
+                          is_convertible_v<U4 const&, T4> and
+                          is_convertible_v<U5 const&, T5> and
+                          is_convertible_v<U6 const&, T6> and
+                          is_convertible_v<U7 const&, T7>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5, U6, U7> const& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  , __x3(std::forward<U3 const>(t.__x3))
+  , __x4(std::forward<U4 const>(t.__x4))
+  , __x5(std::forward<U5 const>(t.__x5))
+  , __x6(std::forward<U6 const>(t.__x6))
+  , __x7(std::forward<U7 const>(t.__x7))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires is_constructible_v<T0, U0> and
+           is_constructible_v<T1, U1> and
+           is_constructible_v<T2, U2> and
+           is_constructible_v<T3, U3> and
+           is_constructible_v<T4, U4> and
+           is_constructible_v<T5, U5> and
+           is_constructible_v<T6, U6> and
+           is_constructible_v<T7, U7>
+  constexpr explicit(not (is_convertible_v<U0, T0> and
+                          is_convertible_v<U1, T1> and
+                          is_convertible_v<U2, T2> and
+                          is_convertible_v<U3, T3> and
+                          is_convertible_v<U4, T4> and
+                          is_convertible_v<U5, T5> and
+                          is_convertible_v<U6, T6> and
+                          is_convertible_v<U7, T7>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5, U6, U7>&& t)
+  : __x0(std::forward<U0>(t.__x0))
+  , __x1(std::forward<U1>(t.__x1))
+  , __x2(std::forward<U2>(t.__x2))
+  , __x3(std::forward<U3>(t.__x3))
+  , __x4(std::forward<U4>(t.__x4))
+  , __x5(std::forward<U5>(t.__x5))
+  , __x6(std::forward<U6>(t.__x6))
+  , __x7(std::forward<U7>(t.__x7))
+  {}
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires is_constructible_v<T0, U0 const> and
+           is_constructible_v<T1, U1 const> and
+           is_constructible_v<T2, U2 const> and
+           is_constructible_v<T3, U3 const> and
+           is_constructible_v<T4, U4 const> and
+           is_constructible_v<T5, U5 const> and
+           is_constructible_v<T6, U6 const> and
+           is_constructible_v<T7, U7 const>
+  constexpr explicit(not (is_convertible_v<U0 const, T0> and
+                          is_convertible_v<U1 const, T1> and
+                          is_convertible_v<U2 const, T2> and
+                          is_convertible_v<U3 const, T3> and
+                          is_convertible_v<U4 const, T4> and
+                          is_convertible_v<U5 const, T5> and
+                          is_convertible_v<U6 const, T6> and
+                          is_convertible_v<U7 const, T7>))
+  tuple(tuple<U0, U1, U2, U3, U4, U5, U6, U7> const&& t)
+  : __x0(std::forward<U0 const>(t.__x0))
+  , __x1(std::forward<U1 const>(t.__x1))
+  , __x2(std::forward<U2 const>(t.__x2))
+  , __x3(std::forward<U3 const>(t.__x3))
+  , __x4(std::forward<U4 const>(t.__x4))
+  , __x5(std::forward<U5 const>(t.__x5))
+  , __x6(std::forward<U6 const>(t.__x6))
+  , __x7(std::forward<U7 const>(t.__x7))
+  {}
+
+  template<class Alloc>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&> and
+                          __is_implicitly_constructible<T1, Alloc const&> and
+                          __is_implicitly_constructible<T2, Alloc const&> and
+                          __is_implicitly_constructible<T3, Alloc const&> and
+                          __is_implicitly_constructible<T4, Alloc const&> and
+                          __is_implicitly_constructible<T5, Alloc const&> and
+                          __is_implicitly_constructible<T6, Alloc const&> and
+                          __is_implicitly_constructible<T7, Alloc const&>))
+  tuple(allocator_arg_t, Alloc const& a)
+  requires __constructible_with_allocator<T0, Alloc const&> and
+           __constructible_with_allocator<T1, Alloc const&> and
+           __constructible_with_allocator<T2, Alloc const&> and
+           __constructible_with_allocator<T3, Alloc const&> and
+           __constructible_with_allocator<T4, Alloc const&> and
+           __constructible_with_allocator<T5, Alloc const&> and
+           __constructible_with_allocator<T6, Alloc const&> and
+           __constructible_with_allocator<T7, Alloc const&>
+  : __x0(__construct_with_allocator<T0>(a))
+  , __x1(__construct_with_allocator<T1>(a))
+  , __x2(__construct_with_allocator<T2>(a))
+  , __x3(__construct_with_allocator<T3>(a))
+  , __x4(__construct_with_allocator<T4>(a))
+  , __x5(__construct_with_allocator<T5>(a))
+  , __x6(__construct_with_allocator<T6>(a))
+  , __x7(__construct_with_allocator<T7>(a))
+  {}
+
+  template<class Alloc>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, T0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, T1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, T2 const&> and
+                          __is_implicitly_constructible<T3, Alloc const&, T3 const&> and
+                          __is_implicitly_constructible<T4, Alloc const&, T4 const&> and
+                          __is_implicitly_constructible<T5, Alloc const&, T5 const&> and
+                          __is_implicitly_constructible<T6, Alloc const&, T6 const&> and
+                          __is_implicitly_constructible<T7, Alloc const&, T7 const&>))
+  tuple(allocator_arg_t, Alloc const& alloc, T0 const& t0, T1 const& t1, T2 const& t2, T3 const& t3, T4 const& t4, T5 const& t5, T6 const& t6, T7 const& t7)
+  requires __constructible_with_allocator<T0, Alloc const&, T0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, T1 const&> and
+           __constructible_with_allocator<T2, Alloc const&, T2 const&> and
+           __constructible_with_allocator<T3, Alloc const&, T3 const&> and
+           __constructible_with_allocator<T4, Alloc const&, T4 const&> and
+           __constructible_with_allocator<T5, Alloc const&, T5 const&> and
+           __constructible_with_allocator<T6, Alloc const&, T6 const&> and
+           __constructible_with_allocator<T7, Alloc const&, T7 const&>
+  : __x0(__construct_with_allocator<T0>(alloc, t0))
+  , __x1(__construct_with_allocator<T1>(alloc, t1))
+  , __x2(__construct_with_allocator<T2>(alloc, t2))
+  , __x3(__construct_with_allocator<T3>(alloc, t3))
+  , __x4(__construct_with_allocator<T4>(alloc, t4))
+  , __x5(__construct_with_allocator<T5>(alloc, t5))
+  , __x6(__construct_with_allocator<T6>(alloc, t6))
+  , __x7(__construct_with_allocator<T7>(alloc, t7))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires __constructible_with_allocator<T0, Alloc const&, U0> and
+           __constructible_with_allocator<T1, Alloc const&, U1> and
+           __constructible_with_allocator<T2, Alloc const&, U2> and
+           __constructible_with_allocator<T3, Alloc const&, U3> and
+           __constructible_with_allocator<T4, Alloc const&, U4> and
+           __constructible_with_allocator<T5, Alloc const&, U5> and
+           __constructible_with_allocator<T6, Alloc const&, U6> and
+           __constructible_with_allocator<T7, Alloc const&, U7>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5> and
+                          __is_implicitly_constructible<T6, Alloc const&, U6> and
+                          __is_implicitly_constructible<T7, Alloc const&, U7>))
+  tuple(allocator_arg_t, Alloc const& alloc, U0&& u0, U1&& u1, U2&& u2, U3&& u3, U4&& u4, U5&& u5, U6&& u6, U7&& u7)
+  : __x0(__construct_with_allocator<T0>(alloc, std::forward<U0>(u0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::forward<U1>(u1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::forward<U2>(u2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::forward<U3>(u3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::forward<U4>(u4)))
+  , __x5(__construct_with_allocator<T5>(alloc, std::forward<U5>(u5)))
+  , __x6(__construct_with_allocator<T6>(alloc, std::forward<U6>(u6)))
+  , __x7(__construct_with_allocator<T7>(alloc, std::forward<U7>(u7)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&> and
+           __constructible_with_allocator<T3, Alloc const&, U3&> and
+           __constructible_with_allocator<T4, Alloc const&, U4&> and
+           __constructible_with_allocator<T5, Alloc const&, U5&> and
+           __constructible_with_allocator<T6, Alloc const&, U6&> and
+           __constructible_with_allocator<T7, Alloc const&, U7&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5&> and
+                          __is_implicitly_constructible<T6, Alloc const&, U6&> and
+                          __is_implicitly_constructible<T7, Alloc const&, U7&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5, U6>& t)
+  : __x0(__construct_with_allocator<T0>(alloc, t.__x0))
+  , __x1(__construct_with_allocator<T1>(alloc, t.__x1))
+  , __x2(__construct_with_allocator<T2>(alloc, t.__x2))
+  , __x3(__construct_with_allocator<T3>(alloc, t.__x3))
+  , __x4(__construct_with_allocator<T4>(alloc, t.__x4))
+  , __x5(__construct_with_allocator<T5>(alloc, t.__x5))
+  , __x6(__construct_with_allocator<T6>(alloc, t.__x6))
+  , __x7(__construct_with_allocator<T7>(alloc, t.__x7))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&> and
+           __constructible_with_allocator<T2, Alloc const&, U2 const&> and
+           __constructible_with_allocator<T3, Alloc const&, U3 const&> and
+           __constructible_with_allocator<T4, Alloc const&, U4 const&> and
+           __constructible_with_allocator<T5, Alloc const&, U5 const&> and
+           __constructible_with_allocator<T6, Alloc const&, U6 const&> and
+           __constructible_with_allocator<T7, Alloc const&, U7 const&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0 const&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1 const&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2 const&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3 const&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4 const&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5 const&> and
+                          __is_implicitly_constructible<T6, Alloc const&, U6 const&> and
+                          __is_implicitly_constructible<T7, Alloc const&, U7 const&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5, U6, U7> const& t)
+  : __x0(__construct_with_allocator<T0>(alloc, t.__x0))
+  , __x1(__construct_with_allocator<T1>(alloc, t.__x1))
+  , __x2(__construct_with_allocator<T2>(alloc, t.__x2))
+  , __x3(__construct_with_allocator<T3>(alloc, t.__x3))
+  , __x4(__construct_with_allocator<T4>(alloc, t.__x4))
+  , __x5(__construct_with_allocator<T5>(alloc, t.__x5))
+  , __x6(__construct_with_allocator<T6>(alloc, t.__x6))
+  , __x7(__construct_with_allocator<T7>(alloc, t.__x7))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires __constructible_with_allocator<T0, Alloc const&, U0&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2&&> and
+           __constructible_with_allocator<T3, Alloc const&, U3&&> and
+           __constructible_with_allocator<T4, Alloc const&, U4&&> and
+           __constructible_with_allocator<T5, Alloc const&, U5&&> and
+           __constructible_with_allocator<T6, Alloc const&, U6&&> and
+           __constructible_with_allocator<T7, Alloc const&, U7&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0&&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1&&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2&&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3&&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4&&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5&&> and
+                          __is_implicitly_constructible<T6, Alloc const&, U6&&> and
+                          __is_implicitly_constructible<T7, Alloc const&, U7&&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5, U6, U7>&& t)
+  : __x0(__construct_with_allocator<T0>(alloc, std::move(t.__x0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::move(t.__x1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::move(t.__x2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::move(t.__x3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::move(t.__x4)))
+  , __x5(__construct_with_allocator<T5>(alloc, std::move(t.__x5)))
+  , __x6(__construct_with_allocator<T6>(alloc, std::move(t.__x6)))
+  , __x7(__construct_with_allocator<T7>(alloc, std::move(t.__x7)))
+  {}
+
+  template<class Alloc, class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires __constructible_with_allocator<T0, Alloc const&, U0 const&&> and
+           __constructible_with_allocator<T1, Alloc const&, U1 const&&> and
+           __constructible_with_allocator<T2, Alloc const&, U2 const&&> and
+           __constructible_with_allocator<T3, Alloc const&, U3 const&&> and
+           __constructible_with_allocator<T4, Alloc const&, U4 const&&> and
+           __constructible_with_allocator<T5, Alloc const&, U5 const&&> and
+           __constructible_with_allocator<T6, Alloc const&, U6 const&&> and
+           __constructible_with_allocator<T7, Alloc const&, U7 const&&>
+  constexpr explicit(not (__is_implicitly_constructible<T0, Alloc const&, U0 const&&> and
+                          __is_implicitly_constructible<T1, Alloc const&, U1 const&&> and
+                          __is_implicitly_constructible<T2, Alloc const&, U2 const&&> and
+                          __is_implicitly_constructible<T3, Alloc const&, U3 const&&> and
+                          __is_implicitly_constructible<T4, Alloc const&, U4 const&&> and
+                          __is_implicitly_constructible<T5, Alloc const&, U5 const&&> and
+                          __is_implicitly_constructible<T6, Alloc const&, U6 const&&> and
+                          __is_implicitly_constructible<T7, Alloc const&, U7 const&&>))
+  tuple(allocator_arg_t, Alloc const& alloc, tuple<U0, U1, U2, U3, U4, U5, U6, U7> const&& t)
+  : __x0(__construct_with_allocator<T0>(alloc, std::move(t.__x0)))
+  , __x1(__construct_with_allocator<T1>(alloc, std::move(t.__x1)))
+  , __x2(__construct_with_allocator<T2>(alloc, std::move(t.__x2)))
+  , __x3(__construct_with_allocator<T3>(alloc, std::move(t.__x3)))
+  , __x4(__construct_with_allocator<T4>(alloc, std::move(t.__x4)))
+  , __x5(__construct_with_allocator<T5>(alloc, std::move(t.__x5)))
+  , __x6(__construct_with_allocator<T6>(alloc, std::move(t.__x6)))
+  , __x7(__construct_with_allocator<T7>(alloc, std::move(t.__x7)))
+  {}
+
+  // template<class Alloc, tuple-like UTuple>
+  // constexpr explicit(see below) tuple(allocator_arg_t, const Alloc& a, UTuple&&);
+
+  tuple(tuple const&) = default;
+  tuple(tuple&&) = default;
+
+  // [tuple.assign], tuple assignment
+  constexpr tuple& operator=(tuple const&) = default;
+  constexpr tuple& operator=(tuple&&) = default;
+
+  constexpr const tuple& operator=(tuple const& other) const
+  requires std::is_copy_assignable_v<T0 const> and
+           std::is_copy_assignable_v<T1 const> and
+           std::is_copy_assignable_v<T2 const> and
+           std::is_copy_assignable_v<T3 const> and
+           std::is_copy_assignable_v<T4 const> and
+           std::is_copy_assignable_v<T5 const> and
+           std::is_copy_assignable_v<T6 const> and
+           std::is_copy_assignable_v<T7 const>
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    [[clang::always_inline]] __x5 = other.__x5;
+    [[clang::always_inline]] __x6 = other.__x6;
+    [[clang::always_inline]] __x7 = other.__x7;
+    return *this;
+  }
+
+  constexpr const tuple& operator=(tuple&& other) const
+  requires std::is_assignable_v<T0 const&, T0> and
+           std::is_assignable_v<T1 const&, T1> and
+           std::is_assignable_v<T2 const&, T2> and
+           std::is_assignable_v<T3 const&, T3> and
+           std::is_assignable_v<T4 const&, T4> and
+           std::is_assignable_v<T5 const&, T5> and
+           std::is_assignable_v<T6 const&, T6> and
+           std::is_assignable_v<T7 const&, T7>
+  {
+    [[clang::always_inline]] swap(std::move(other));
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires std::is_assignable_v<T0&, U0 const&> and
+           std::is_assignable_v<T1&, U1 const&> and
+           std::is_assignable_v<T2&, U2 const&> and
+           std::is_assignable_v<T3&, U3 const&> and
+           std::is_assignable_v<T4&, U4 const&> and
+           std::is_assignable_v<T5&, U5 const&> and
+           std::is_assignable_v<T6&, U6 const&> and
+           std::is_assignable_v<T7&, U7 const&>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4, U5, U6, U7> const& other)
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    [[clang::always_inline]] __x5 = other.__x5;
+    [[clang::always_inline]] __x6 = other.__x6;
+    [[clang::always_inline]] __x7 = other.__x7;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires std::is_assignable_v<T0 const&, U0 const&> and
+           std::is_assignable_v<T1 const&, U1 const&> and
+           std::is_assignable_v<T2 const&, U2 const&> and
+           std::is_assignable_v<T3 const&, U3 const&> and
+           std::is_assignable_v<T4 const&, U4 const&> and
+           std::is_assignable_v<T5 const&, U5 const&> and
+           std::is_assignable_v<T6 const&, U6 const&> and
+           std::is_assignable_v<T7 const&, U7 const&>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4, U5, U6, U7> const& other) const
+  {
+    [[clang::always_inline]] __x0 = other.__x0;
+    [[clang::always_inline]] __x1 = other.__x1;
+    [[clang::always_inline]] __x2 = other.__x2;
+    [[clang::always_inline]] __x3 = other.__x3;
+    [[clang::always_inline]] __x4 = other.__x4;
+    [[clang::always_inline]] __x5 = other.__x5;
+    [[clang::always_inline]] __x6 = other.__x6;
+    [[clang::always_inline]] __x7 = other.__x7;
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires std::is_assignable_v<T0&, U0> and
+           std::is_assignable_v<T1&, U1> and
+           std::is_assignable_v<T2&, U2> and
+           std::is_assignable_v<T3&, U3> and
+           std::is_assignable_v<T4&, U4> and
+           std::is_assignable_v<T5&, U5> and
+           std::is_assignable_v<T6&, U6> and
+           std::is_assignable_v<T7&, U7>
+  constexpr tuple& operator=(tuple<U0, U1, U2, U3, U4, U5, U6, U7>&& other)
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    [[clang::always_inline]] __x3 = std::move(other.__x3);
+    [[clang::always_inline]] __x4 = std::move(other.__x4);
+    [[clang::always_inline]] __x5 = std::move(other.__x5);
+    [[clang::always_inline]] __x6 = std::move(other.__x6);
+    [[clang::always_inline]] __x7 = std::move(other.__x7);
+    return *this;
+  }
+
+  template<class U0, class U1, class U2, class U3, class U4, class U5, class U6, class U7>
+  requires is_assignable_v<T0 const&, U0 const> and
+           is_assignable_v<T1 const&, U1 const> and
+           is_assignable_v<T2 const&, U2 const> and
+           is_assignable_v<T3 const&, U3 const> and
+           is_assignable_v<T4 const&, U4 const> and
+           is_assignable_v<T5 const&, U5 const> and
+           is_assignable_v<T6 const&, U6 const> and
+           is_assignable_v<T7 const&, U7 const>
+  constexpr tuple const& operator=(tuple<U0, U1, U2, U4, U5, U6, U7> const&& other) const
+  {
+    [[clang::always_inline]] __x0 = std::move(other.__x0);
+    [[clang::always_inline]] __x1 = std::move(other.__x1);
+    [[clang::always_inline]] __x2 = std::move(other.__x2);
+    [[clang::always_inline]] __x3 = std::move(other.__x3);
+    [[clang::always_inline]] __x4 = std::move(other.__x4);
+    [[clang::always_inline]] __x5 = std::move(other.__x5);
+    [[clang::always_inline]] __x6 = std::move(other.__x6);
+    [[clang::always_inline]] __x7 = std::move(other.__x7);
+    return *this;
+  }
+
+  // template<tuple-like UTuple>
+  // constexpr tuple& operator=(UTuple&&);
+  // template<tuple-like UTuple>
+  // constexpr const tuple& operator=(UTuple&&) const;
+
+  // [tuple.swap], tuple swap
+
+  constexpr void swap(tuple& other) noexcept(is_nothrow_swappable_v<T0> and
+                                             is_nothrow_swappable_v<T1> and
+                                             is_nothrow_swappable_v<T2> and
+                                             is_nothrow_swappable_v<T3> and
+                                             is_nothrow_swappable_v<T4> and
+                                             is_nothrow_swappable_v<T5> and
+                                             is_nothrow_swappable_v<T6> and
+                                             is_nothrow_swappable_v<T7>)
+  requires swappable<T0> and
+           swappable<T1> and
+           swappable<T2> and
+           swappable<T3> and
+           swappable<T4> and
+           swappable<T5> and
+           swappable<T6> and
+           swappable<T7>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+    [[clang::always_inline]] std::ranges::swap(__x3, other.__x3);
+    [[clang::always_inline]] std::ranges::swap(__x4, other.__x4);
+    [[clang::always_inline]] std::ranges::swap(__x5, other.__x5);
+    [[clang::always_inline]] std::ranges::swap(__x6, other.__x6);
+    [[clang::always_inline]] std::ranges::swap(__x7, other.__x7);
+  }
+
+  constexpr void swap(tuple const& other) const noexcept(is_nothrow_swappable_v<T0 const> and
+                                                         is_nothrow_swappable_v<T1 const> and
+                                                         is_nothrow_swappable_v<T2 const> and
+                                                         is_nothrow_swappable_v<T3 const> and
+                                                         is_nothrow_swappable_v<T4 const> and
+                                                         is_nothrow_swappable_v<T5 const> and
+                                                         is_nothrow_swappable_v<T6 const> and
+                                                         is_nothrow_swappable_v<T7 const>)
+  requires swappable<T0 const> and
+           swappable<T1 const> and
+           swappable<T2 const> and
+           swappable<T3 const> and
+           swappable<T4 const> and
+           swappable<T5 const> and
+           swappable<T6 const> and
+           swappable<T7 const>
+  {
+    [[clang::always_inline]] std::ranges::swap(__x0, other.__x0);
+    [[clang::always_inline]] std::ranges::swap(__x1, other.__x1);
+    [[clang::always_inline]] std::ranges::swap(__x2, other.__x2);
+    [[clang::always_inline]] std::ranges::swap(__x3, other.__x3);
+    [[clang::always_inline]] std::ranges::swap(__x4, other.__x4);
+    [[clang::always_inline]] std::ranges::swap(__x5, other.__x5);
+    [[clang::always_inline]] std::ranges::swap(__x6, other.__x6);
+    [[clang::always_inline]] std::ranges::swap(__x7, other.__x7);
+  }
+
+  template<equality_comparable_with<T0> U0,
+           equality_comparable_with<T1> U1,
+           equality_comparable_with<T2> U2,
+           equality_comparable_with<T3> U3,
+           equality_comparable_with<T4> U4,
+           equality_comparable_with<T5> U5,
+           equality_comparable_with<T6> U6,
+           equality_comparable_with<T7> U7>
+  friend constexpr bool operator==(tuple const& t, tuple<U0, U1, U2, U3, U4, U5, U6, U7> const& u)
+  {
+      return t.__x0 == u.__x0 and
+             t.__x1 == u.__x1 and
+             t.__x2 == u.__x2 and
+             t.__x3 == u.__x3 and
+             t.__x4 == u.__x4 and
+             t.__x5 == u.__x5 and
+             t.__x6 == u.__x6 and
+             t.__x7 == u.__x7;
+  }
+
+  template<__synth_three_way_comparable_with<T0> U0,
+           __synth_three_way_comparable_with<T1> U1,
+           __synth_three_way_comparable_with<T2> U2,
+           __synth_three_way_comparable_with<T3> U3,
+           __synth_three_way_comparable_with<T4> U4,
+           __synth_three_way_comparable_with<T5> U5,
+           __synth_three_way_comparable_with<T6> U6,
+           __synth_three_way_comparable_with<T7> U7>
+  friend constexpr auto operator<=>(tuple const& t, tuple<U0, U1, U2, U3, U4, U5, U6, U7> const& u)
+  -> common_comparison_category_t<__synth_three_way_result<T0, U0>,
+                                  __synth_three_way_result<T1, U1>,
+                                  __synth_three_way_result<T2, U2>,
+                                  __synth_three_way_result<T3, U3>,
+                                  __synth_three_way_result<T4, U4>,
+                                  __synth_three_way_result<T5, U5>,
+                                  __synth_three_way_result<T6, U6>,
+                                  __synth_three_way_result<T7, U7>>
+  {
+    if (auto result = __synth_three_way(t.__x0, u.__x0); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x1, u.__x1); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x2, u.__x2); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x3, u.__x3); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x4, u.__x4); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x5, u.__x5); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    if (auto result = __synth_three_way(t.__x6, u.__x6); result != std::partial_ordering::equivalent) {
+      return result;
+    }
+
+    return __synth_three_way(t.__x7, u.__x7);
+  }
+};
+*/
+template<size_t I, class... Ts>
+requires (I < sizeof...(Ts))
+constexpr tuple_element_t<I, tuple<Ts...>>& get(tuple<Ts...>& t) noexcept
+{
+  if constexpr (I == 0) {
+    return t.__x0;
+  }
+  else if constexpr (I == 1) {
+    return t.__x1;
+  }
+  else if constexpr (I == 2) {
+    return t.__x2;
+  }
+  else if constexpr (I == 3) {
+    return t.__x3;
+  }
+  else if constexpr (I == 4) {
+    return t.__x4;
+  }
+  else if constexpr (I == 5) {
+    return t.__x5;
+  }
+  else if constexpr (I == 6) {
+    return t.__x6;
+  }
+  else if constexpr (I == 7) {
+    return t.__x7;
+  }
+  else if constexpr (I == 8) {
+    return t.__x8;
+  }
+  else if constexpr (I == 9) {
+    return t.__x9;
+  }
+  else {
+    static_assert(&t == nullptr);
+  }
+}
+
+template<size_t I, class... Ts>
+requires (I < sizeof...(Ts))
+constexpr tuple_element_t<I, tuple<Ts...>> const& get(tuple<Ts...> const& t) noexcept
+{
+  if constexpr (I == 0) {
+    return t.__x0;
+  }
+  else if constexpr (I == 1) {
+    return t.__x1;
+  }
+  else if constexpr (I == 2) {
+    return t.__x2;
+  }
+  else if constexpr (I == 3) {
+    return t.__x3;
+  }
+  else if constexpr (I == 4) {
+    return t.__x4;
+  }
+  else if constexpr (I == 5) {
+    return t.__x5;
+  }
+  else if constexpr (I == 6) {
+    return t.__x6;
+  }
+  else if constexpr (I == 7) {
+    return t.__x7;
+  }
+  else if constexpr (I == 8) {
+    return t.__x8;
+  }
+  else if constexpr (I == 9) {
+    return t.__x9;
+  }
+  else {
+    static_assert(&t == nullptr);
+  }
+}
+
+template<size_t I, class... Ts>
+requires (I < sizeof...(Ts))
+constexpr tuple_element_t<I, tuple<Ts...>>&& get(tuple<Ts...>&& t) noexcept
+{
+  if constexpr (I == 0) {
+    return std::forward<tuple_element_t<I, tuple<Ts...>>>(t.__x0);
+  }
+  else if constexpr (I == 1) {
+    return std::forward<tuple_element_t<I, tuple<Ts...>>>(t.__x1);
+  }
+  else if constexpr (I == 2) {
+    return std::forward<tuple_element_t<I, tuple<Ts...>>>(t.__x2);
+  }
+  else if constexpr (I == 3) {
+    return std::forward<tuple_element_t<I, tuple<Ts...>>>(t.__x3);
+  }
+  else if constexpr (I == 4) {
+    return std::forward<tuple_element_t<I, tuple<Ts...>>>(t.__x4);
+  }
+  else if constexpr (I == 5) {
+    return std::forward<tuple_element_t<I, tuple<Ts...>>>(t.__x5);
+  }
+  else if constexpr (I == 6) {
+    return std::forward<tuple_element_t<I, tuple<Ts...>>>(t.__x6);
+  }
+  else if constexpr (I == 7) {
+    return std::forward<tuple_element_t<I, tuple<Ts...>>>(t.__x7);
+  }
+  else if constexpr (I == 8) {
+    return std::forward<tuple_element_t<I, tuple<Ts...>>>(t.__x8);
+  }
+  else if constexpr (I == 9) {
+    return std::forward<tuple_element_t<I, tuple<Ts...>>>(t.__x9);
+  }
+  else {
+    static_assert(&t == nullptr);
+  }
+}
+
+template<size_t I, class... Ts>
+requires (I < sizeof...(Ts))
+constexpr tuple_element_t<I, tuple<Ts...>> const&& get(tuple<Ts...> const&& t) noexcept
+{
+  if constexpr (I == 0) {
+    return std::move(t.__x0);
+  }
+  else if constexpr (I == 1) {
+    return std::move(t.__x1);
+  }
+  else if constexpr (I == 2) {
+    return std::move(t.__x2);
+  }
+  else if constexpr (I == 3) {
+    return std::move(t.__x3);
+  }
+  else if constexpr (I == 4) {
+    return std::move(t.__x4);
+  }
+  else if constexpr (I == 5) {
+    return std::move(t.__x5);
+  }
+  else if constexpr (I == 6) {
+    return std::move(t.__x6);
+  }
+  else if constexpr (I == 7) {
+    return std::move(t.__x7);
+  }
+  else if constexpr (I == 8) {
+    return std::move(t.__x8);
+  }
+  else if constexpr (I == 9) {
+    return std::move(t.__x9);
+  }
+  else {
+    static_assert(&t == nullptr);
+  }
+}
+
+template<class, class...>
+inline constexpr auto __count_occurrences = 0;
+
+template<class T, class T0, class... Ts>
+inline constexpr auto __count_occurrences<T, T0, Ts...> = static_cast<int>(is_same_v<T, T0>) + __count_occurrences<T, Ts...>;
+
+template<class T, class... Ts>
+inline constexpr auto __is_unique = __count_occurrences<T, Ts...> == 1;
+
+template<class T, class... Ts>
+requires __is_unique<T, Ts...>
+constexpr T& get(tuple<Ts...>& t) noexcept
+{
+  if constexpr (std::same_as<T, Ts...[0]>) {
+    return t.__x0;
+  }
+  else if constexpr (std::same_as<T, Ts...[1]>) {
+    return t.__x1;
+  }
+  else if constexpr (std::same_as<T, Ts...[2]>) {
+    return t.__x2;
+  }
+  else if constexpr (std::same_as<T, Ts...[3]>) {
+    return t.__x3;
+  }
+  else if constexpr (std::same_as<T, Ts...[4]>) {
+    return t.__x4;
+  }
+  else if constexpr (std::same_as<T, Ts...[5]>) {
+    return t.__x5;
+  }
+  else if constexpr (std::same_as<T, Ts...[6]>) {
+    return t.__x6;
+  }
+  else if constexpr (std::same_as<T, Ts...[7]>) {
+    return t.__x7;
+  }
+  else if constexpr (std::same_as<T, Ts...[8]>) {
+    return t.__x8;
+  }
+  else if constexpr (std::same_as<T, Ts...[9]>) {
+    return t.__x9;
+  }
+}
+
+template<class T, class... Ts>
+requires __is_unique<T, Ts...>
+constexpr T const& get(tuple<Ts...> const& t) noexcept
+{
+  if constexpr (std::same_as<T, Ts...[0]>) {
+    return t.__x0;
+  }
+  else if constexpr (std::same_as<T, Ts...[1]>) {
+    return t.__x1;
+  }
+  else if constexpr (std::same_as<T, Ts...[2]>) {
+    return t.__x2;
+  }
+  else if constexpr (std::same_as<T, Ts...[3]>) {
+    return t.__x3;
+  }
+  else if constexpr (std::same_as<T, Ts...[4]>) {
+    return t.__x4;
+  }
+  else if constexpr (std::same_as<T, Ts...[5]>) {
+    return t.__x5;
+  }
+  else if constexpr (std::same_as<T, Ts...[6]>) {
+    return t.__x6;
+  }
+  else if constexpr (std::same_as<T, Ts...[7]>) {
+    return t.__x7;
+  }
+  else if constexpr (std::same_as<T, Ts...[8]>) {
+    return t.__x8;
+  }
+  else if constexpr (std::same_as<T, Ts...[9]>) {
+    return t.__x9;
+  }
+  else {
+    static_assert(&t == nullptr, "not implemented");
+  }
+}
+
+template<class T, class... Ts>
+requires __is_unique<T, Ts...>
+constexpr T&& get(tuple<Ts...>&& t) noexcept
+{
+  if constexpr (std::same_as<T, Ts...[0]>) {
+    return std::move(t.__x0);
+  }
+  else if constexpr (std::same_as<T, Ts...[1]>) {
+    return std::move(t.__x1);
+  }
+  else if constexpr (std::same_as<T, Ts...[2]>) {
+    return std::move(t.__x2);
+  }
+  else if constexpr (std::same_as<T, Ts...[3]>) {
+    return std::move(t.__x3);
+  }
+  else if constexpr (std::same_as<T, Ts...[4]>) {
+    return std::move(t.__x4);
+  }
+  else if constexpr (std::same_as<T, Ts...[5]>) {
+    return std::move(t.__x5);
+  }
+  else if constexpr (std::same_as<T, Ts...[6]>) {
+    return std::move(t.__x6);
+  }
+  else if constexpr (std::same_as<T, Ts...[7]>) {
+    return std::move(t.__x7);
+  }
+  else if constexpr (std::same_as<T, Ts...[8]>) {
+    return std::move(t.__x8);
+  }
+  else if constexpr (std::same_as<T, Ts...[9]>) {
+    return std::move(t.__x9);
+  }
+  else {
+    static_assert(&t == nullptr, "not implemented");
+  }
+}
+
+template<class T, class... Ts>
+requires __is_unique<T, Ts...>
+constexpr T const&& get(tuple<Ts...> const&& t) noexcept
+{
+  if constexpr (std::same_as<T, Ts...[0]>) {
+    return std::move(t.__x0);
+  }
+  else if constexpr (std::same_as<T, Ts...[1]>) {
+    return std::move(t.__x1);
+  }
+  else if constexpr (std::same_as<T, Ts...[2]>) {
+    return std::move(t.__x2);
+  }
+  else if constexpr (std::same_as<T, Ts...[3]>) {
+    return std::move(t.__x3);
+  }
+  else if constexpr (std::same_as<T, Ts...[4]>) {
+    return std::move(t.__x4);
+  }
+  else if constexpr (std::same_as<T, Ts...[5]>) {
+    return std::move(t.__x5);
+  }
+  else if constexpr (std::same_as<T, Ts...[6]>) {
+    return std::move(t.__x6);
+  }
+  else if constexpr (std::same_as<T, Ts...[7]>) {
+    return std::move(t.__x7);
+  }
+  else if constexpr (std::same_as<T, Ts...[8]>) {
+    return std::move(t.__x8);
+  }
+  else if constexpr (std::same_as<T, Ts...[9]>) {
+    return std::move(t.__x9);
+  }
+  else {
+    static_assert(&t == nullptr, "not implemented");
+  }
+}
+
+template<class F, class Tuple, size_t... N>
+constexpr decltype(auto) __apply_impl(F&& f, Tuple&& tuple, std::index_sequence<N...>) noexcept(noexcept(std::invoke(std::forward<F>(f), std::get<N>(std::forward<Tuple>(tuple))...)))
+{
+  return std::invoke(std::forward<F>(f), std::get<N>(std::forward<Tuple>(tuple))...);
+}
+
+template<class F, class Tuple>
+constexpr decltype(auto) apply(F&& f, Tuple&& tuple) noexcept(noexcept(__apply_impl(std::forward<F>(f), std::forward<Tuple>(tuple), std::make_index_sequence<tuple_size_v<remove_cvref_t<Tuple>>>())))
+{
+  return __apply_impl(std::forward<F>(f), std::forward<Tuple>(tuple), std::make_index_sequence<tuple_size_v<remove_cvref_t<Tuple>>>());
+}
+
+template<class... Ts>
+requires (swappable<Ts> and ...)
+constexpr void swap(tuple<Ts...>& x, tuple<Ts...>& y) noexcept(noexcept(x.swap(y)))
+{
+  x.swap(y);
+}
+
+template<class... Ts>
+requires (swappable<Ts const> and ...)
+constexpr void swap(tuple<Ts...> const& x, tuple<Ts...> const& y) noexcept(noexcept(x.swap(y)))
+{
+  x.swap(y);
+}
+
+
+template <class... _Tp, class _Alloc>
+struct _LIBCPP_TEMPLATE_VIS uses_allocator<tuple<_Tp...>, _Alloc> : true_type {};
+
+template<class... TTypes>
+constexpr tuple<unwrap_ref_decay_t<TTypes>...> make_tuple(TTypes&&... t)
+{
+  return tuple<unwrap_ref_decay_t<TTypes>...>(std::forward<TTypes>(t)...);
+}
+
+template<class T, class Tuple, size_t... I>
+constexpr T __make_from_tuple_impl(Tuple&& t, index_sequence<I...>) noexcept(noexcept(T(get<I>(std::forward<Tuple>(t))...))) {
+  return T(std::get<I>(std::forward<Tuple>(t))...);
+}
+
+template<class T, __tuple_like Tuple>
+constexpr T make_from_tuple(Tuple&& t) noexcept(noexcept(__make_from_tuple_impl<T>(std::forward<Tuple>(t), make_index_sequence<tuple_size_v<remove_reference_t<Tuple>>>())))
+{
+  return __make_from_tuple_impl<T>(std::forward<Tuple>(t), make_index_sequence<tuple_size_v<remove_reference_t<Tuple>>>());
+}
+
+template<class... TTypes>
+constexpr tuple<TTypes&&...> forward_as_tuple(TTypes&&... t) noexcept
+{
+  return tuple<TTypes&&...>(std::forward<TTypes>(t)...);
+}
+
+template<class... Ts>
+constexpr tuple<Ts&...> tie(Ts&... t) noexcept
+{
+  return tuple<Ts&...>(t...);
+}
+
+template <class... _TTypes, class... _UTypes, template <class> class _TQual, template <class> class _UQual>
+  requires requires { typename tuple<common_reference_t<_TQual<_TTypes>, _UQual<_UTypes>>...>; }
+struct basic_common_reference<tuple<_TTypes...>, tuple<_UTypes...>, _TQual, _UQual> {
+  using type = tuple<common_reference_t<_TQual<_TTypes>, _UQual<_UTypes>>...>;
+};
+
+template <class... _TTypes, class... _UTypes>
+  requires requires { typename tuple<common_type_t<_TTypes, _UTypes>...>; }
+struct common_type<tuple<_TTypes...>, tuple<_UTypes...>> {
+  using type = tuple<common_type_t<_TTypes, _UTypes>...>;
+};
+
+struct __ignore {
+  __ignore() = default;
+  __ignore(__ignore&&) = default;
+  __ignore(__ignore const&) = default;
+  __ignore& operator=(__ignore&&) = default;
+  __ignore& operator=(__ignore const&) = default;
+
+  [[clang::always_inline, gnu::nodebug]] constexpr __ignore(auto&&) noexcept {}
+  [[clang::always_inline, gnu::nodebug]] constexpr __ignore& operator=(auto&&) noexcept { return *this; }
+  [[clang::always_inline, gnu::nodebug]] constexpr __ignore const& operator=(auto&&) const noexcept { return *this; }
+};
+
+constexpr auto ignore = __ignore();
+
+#  if _LIBCPP_STD_VER >= 14
+
+namespace __find_detail {
+
+static constexpr size_t __not_found = static_cast<size_t>(-1);
+static constexpr size_t __ambiguous = __not_found - 1;
+
+inline _LIBCPP_HIDE_FROM_ABI constexpr size_t __find_idx_return(size_t __curr_i, size_t __res, bool __matches) {
+  return !__matches ? __res : (__res == __not_found ? __curr_i : __ambiguous);
+}
+
+template <size_t _Nx>
+inline _LIBCPP_HIDE_FROM_ABI constexpr size_t __find_idx(size_t __i, const bool (&__matches)[_Nx]) {
+  return __i == _Nx
+           ? __not_found
+           : __find_detail::__find_idx_return(__i, __find_detail::__find_idx(__i + 1, __matches), __matches[__i]);
+}
+
+template <class _T1, class... _Args>
+struct __find_exactly_one_checked {
+  static constexpr bool __matches[sizeof...(_Args)] = {is_same<_T1, _Args>::value...};
+  static constexpr size_t value                     = __find_detail::__find_idx(0, __matches);
+  static_assert(value != __not_found, "type not found in type list");
+  static_assert(value != __ambiguous, "type occurs more than once in type list");
+};
+
+template <class _T1>
+struct __find_exactly_one_checked<_T1> {
+  static_assert(!is_same<_T1, _T1>::value, "type not in empty type list");
+};
+
+} // namespace __find_detail
+
+template <typename _T1, typename... _Args>
+struct __find_exactly_one_t : public __find_detail::__find_exactly_one_checked<_T1, _Args...> {};
+
+#  endif
+
+#endif // __experimental_tuple
 _LIBCPP_END_NAMESPACE_STD
 
 _LIBCPP_POP_MACROS

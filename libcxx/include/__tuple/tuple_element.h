@@ -10,6 +10,7 @@
 #define _LIBCPP___TUPLE_TUPLE_ELEMENT_H
 
 #include <__config>
+#include <__fwd/tuple.h>
 #include <__tuple/tuple_indices.h>
 #include <__tuple/tuple_types.h>
 #include <__type_traits/add_const.h>
@@ -21,8 +22,11 @@
 #  pragma GCC system_header
 #endif
 
+#pragma GCC diagnostic ignored "-Wc++26-extensions"
+
 _LIBCPP_BEGIN_NAMESPACE_STD
 
+#ifndef __experimental_tuple
 template <size_t _Ip, class _Tp>
 struct _LIBCPP_TEMPLATE_VIS tuple_element;
 
@@ -81,6 +85,61 @@ using tuple_element_t _LIBCPP_NODEBUG = typename tuple_element<_Ip, _Tp...>::typ
 #  endif
 
 #endif // _LIBCPP_CXX03_LANG
+#else
+template <size_t I, class T>
+struct tuple_element;
+
+template <size_t I, class T>
+using tuple_element_t [[gnu::nodebug]] = typename tuple_element<I, T>::type;
+
+template <class T, size_t I>
+concept __has_tuple_element = requires { typename tuple_element_t<I, T>; };
+
+template <size_t I, __has_tuple_element<I> T>
+struct tuple_element<I, T const> {
+  using type [[gnu::nodebug]] = tuple_element_t<I, T> const;
+};
+
+template <size_t I, __has_tuple_element<I> T>
+struct tuple_element<I, T volatile> {
+  using type [[gnu::nodebug]] = tuple_element_t<I, T> volatile;
+};
+
+template <size_t I, __has_tuple_element<I> T>
+struct tuple_element<I, T const volatile> {
+  using type [[gnu::nodebug]] = tuple_element_t<I, T> const volatile;
+};
+
+template <class T0>
+struct tuple_element<0, tuple<T0>> {
+  using type [[gnu::nodebug]] = T0;
+};
+
+template <class T0, class T1>
+struct tuple_element<0, tuple<T0, T1>> {
+  using type [[gnu::nodebug]] = T0;
+};
+
+template <class T0, class T1>
+struct tuple_element<1, tuple<T0, T1>> {
+  using type [[gnu::nodebug]] = T1;
+};
+
+template <class T0, class T1, class T2>
+struct tuple_element<0, tuple<T0, T1, T2>> {
+  using type [[gnu::nodebug]] = T0;
+};
+
+template <class T0, class T1, class T2>
+struct tuple_element<1, tuple<T0, T1, T2>> {
+  using type [[gnu::nodebug]] = T1;
+};
+
+template <class T0, class T1, class T2>
+struct tuple_element<2, tuple<T0, T1, T2>> {
+  using type [[gnu::nodebug]] = T2;
+};
+#endif
 
 _LIBCPP_END_NAMESPACE_STD
 
